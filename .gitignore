@@ -1,0 +1,39 @@
+# 构建输出
+/target/
+**/target/
+
+# IDE文件
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# 操作系统文件
+.DS_Store
+Thumbs.db
+ehthumbs.db
+Icon?
+desktop.ini
+
+# 日志文件
+*.log
+
+# 依赖管理
+Cargo.lock
+
+# 可执行文件
+**/*.exe
+**/*.dll
+**/*.so
+
+# 临时文件
+tmp/
+temp/
+*.tmp
+*.temp
+
+# 编译器中间文件
+**/*.d
+**/deps/
+**/examples/
+**/incremental/

@@ -1,0 +1,4 @@
+# 构建优化
+[build]
+incremental = true
+jobs =4
