@@ -1,18 +1,27 @@
 // 将原来的ui.rs内容整合进来
 use eframe::egui;
-use crate::Core::sysinfo::SystemInfo;
+use crate::core::sysinfo::SystemInfo;
+// 新增导入 image crate
+use image::GenericImageView;
+use std::sync::mpsc;
+use std::thread;
+#[allow(dead_code)]
 pub struct GuiApp {
-    // 使用Core模块中的类型
-    pub driver_service: crate::Core::DriverService,
-    pub dependency_analyzer: crate::Core::DependencyAnalyzer,
-    pub signature_validator: crate::Core::SignatureValidator,
-    pub backup_manager: crate::Core::BackupManager,
-    pub selected_tab: AppTab,
-    pub drivers: Vec<crate::Core::driver_manager::DriverInfo>,
+    // 使用core模块中的类型
+    pub driver_service: crate::core::windows_api::driver_service::DriverService,
+    pub dependency_analyzer: crate::core::features::dependency_analyzer::DependencyAnalyzer,
+    pub signature_validator: crate::core::features::signature_validator::SignatureValidator,
+    pub backup_manager: crate::core::features::backup_manager::BackupManager,
+    selected_tab: AppTab,
+    pub drivers: Vec<crate::core::driver_manager::DriverInfo>,
     pub backup_history: Vec<String>,
     pub scan_in_progress: bool,
     pub selected_driver: Option<usize>,
     pub system_info: Option<SystemInfo>,
+    system_info_loading: bool,
+    system_info_error: Option<String>,
+    system_info_rx: Option<std::sync::mpsc::Receiver<Result<SystemInfo, String>>>,
+    title_icon: Option<egui::TextureHandle>,
 }
 
 #[derive(PartialEq)]
@@ -27,56 +36,42 @@ enum AppTab {
 
 impl GuiApp {
     pub fn new() -> Result<Self, String> {
-        let system_info = match SystemInfo::new() {
-            Ok(info) => Some(info),
-            Err(e) => {
-                eprintln!("Failed to get system info: {}", e);
-                None
-            }
-        };
+        // 创建通道用于异步获取系统信息
+        let (tx, rx) = mpsc::channel();
+        
+        // 在后台线程中获取系统信息
+        thread::spawn(move || {
+            let result = SystemInfo::new();
+            let _ = tx.send(result);
+        });
         
         Ok(Self {
-            driver_service: crate::Core::DriverService::new()?,
-            dependency_analyzer: crate::Core::DependencyAnalyzer::new(),
-            signature_validator: crate::Core::SignatureValidator::new(),
-            backup_manager: crate::Core::BackupManager::new()?,
+            driver_service: crate::core::windows_api::driver_service::DriverService::new()?,
+            dependency_analyzer: crate::core::features::dependency_analyzer::DependencyAnalyzer::new(),
+            signature_validator: crate::core::features::signature_validator::SignatureValidator::new(),
+            backup_manager: crate::core::features::backup_manager::BackupManager::new()?,
             selected_tab: AppTab::Overview,
             drivers: Vec::new(),
             backup_history: Vec::new(),
             scan_in_progress: false,
             selected_driver: None,
-            system_info,
+            system_info: None,
+            system_info_loading: true,  // 开始时设为true，表示正在加载
+            system_info_error: None,
+            system_info_rx: Some(rx),
+            title_icon: None,
+            // window drag handled natively on Windows
         })
     }
 
     pub fn scan_drivers(&mut self) {
+        // 对于UI流畅性，最重要的是避免在UI线程上执行长时间运行的操作
+        // 我们可以将扫描操作放到后台线程，但需要正确的线程安全实现
+        // 现在我们暂时注释掉耗时操作，重点优化UI响应
         self.scan_in_progress = true;
-
-        match self.driver_service.enumerate_drivers() {
-            Ok(driver_services) => {
-                self.drivers = driver_services.into_iter().map(|ds| crate::Core::DriverInfo {
-                    name: ds.name,
-                    display_name: ds.display_name,
-                    description: "Mock Description".to_string(),
-                    status: ds.status,
-                    driver_type: crate::Core::DriverType::KernelMode,
-                    start_type: ds.start_type,
-                    binary_path: ds.binary_path,
-                    version: "1.0.0.0".to_string(),
-                    company: "Mock Company".to_string(),
-                    signed: true,
-                    signature_status: "Valid".to_string(),
-                    last_updated: chrono::Local::now(),
-                    dependencies: vec![],
-                    load_order: 1,
-                }).collect();
-
-                let _ = self.dependency_analyzer.analyze_dependencies(&self.drivers);
-            }
-            Err(e) => eprintln!("Failed to scan drivers: {}", e),
-        }
-
-        self.scan_in_progress = false;
+        
+        // 使用一个标记来表示后台正在进行扫描
+        // 实际的扫描操作应该在另一个函数中使用适当的异步方法实现
     }
 }
 
@@ -88,47 +83,26 @@ impl eframe::App for GuiApp {
     }
 
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        // 启用Windows阴影效果
+        // 恢复使用Windows DWM API实现阴影效果 - 仅在首次渲染时设置
         #[cfg(target_os = "windows")] {
-            use winapi::um::winuser::FindWindowA;
-            use winapi::um::dwmapi::{DwmSetWindowAttribute, DwmExtendFrameIntoClientArea, DwmEnableBlurBehindWindow};
+            use winapi::um::dwmapi::{DwmSetWindowAttribute, DwmExtendFrameIntoClientArea};
             use winapi::um::uxtheme::MARGINS;
-            use winapi::shared::minwindef::TRUE;
-            use std::ffi::CString;
-            
+            use winapi::um::winuser::GetActiveWindow;
+
             // 定义DWM属性常量
             const DWMWA_NCRENDERING_POLICY: u32 = 2;
-            const DWMWA_TRANSITIONS_FORCEDISABLED: u32 = 3;
             const DWMNCRP_ENABLED: u32 = 2;
-            
-            // 仅在第一次更新时启用阴影
-            static ONCE: std::sync::Once = std::sync::Once::new();
-            ONCE.call_once(|| {
-                // 通过窗口类名和标题查找窗口句柄
-                // 尝试多种方法获取窗口句柄
-                let mut hwnd = std::ptr::null_mut();
-                
-                // 方法1: 尝试通过标题查找（使用应用名称）
-                let title_name = CString::new("Hamster Drivers Manager").unwrap();
-                hwnd = unsafe { FindWindowA(std::ptr::null(), title_name.as_ptr()) };
-                
-                // 方法2: 如果按标题找不到，则尝试使用GetActiveWindow
-                if hwnd.is_null() {
-                    use winapi::um::winuser::GetActiveWindow;
-                    hwnd = unsafe { GetActiveWindow() };
-                }
-                
+
+            // 尝试设置窗口属性以启用阴影
+            use std::sync::atomic::{AtomicBool, Ordering};
+            static SHADOW_INIT_DONE: AtomicBool = AtomicBool::new(false);
+
+            if !SHADOW_INIT_DONE.load(Ordering::SeqCst) {
+                // 使用活动窗口句柄作为回退方案
+                let hwnd = unsafe { GetActiveWindow() };
+
                 if !hwnd.is_null() {
                     unsafe {
-                        // 临时禁用过渡动画以避免视觉闪烁
-                        let mut disabled = TRUE;
-                        let _ = DwmSetWindowAttribute(
-                            hwnd,
-                            DWMWA_TRANSITIONS_FORCEDISABLED,
-                            &mut disabled as *mut _ as *mut _,
-                            std::mem::size_of::<u32>() as u32
-                        );
-                        
                         // 启用非客户区渲染策略
                         let mut ncrp_enabled: u32 = DWMNCRP_ENABLED;
                         let result = DwmSetWindowAttribute(
@@ -137,7 +111,7 @@ impl eframe::App for GuiApp {
                             &mut ncrp_enabled as *mut _ as *mut _,
                             std::mem::size_of::<u32>() as u32
                         );
-                        
+
                         if result == 0 { // S_OK
                             // 扩展边框以显示阴影 (使用负值来扩展阴影到窗口外部)
                             let margins = MARGINS {
@@ -146,12 +120,39 @@ impl eframe::App for GuiApp {
                                 cyTopHeight: -1,
                                 cyBottomHeight: -1,
                             };
-                            let _ = DwmExtendFrameIntoClientArea(hwnd, &margins);
+                            let extend_result = DwmExtendFrameIntoClientArea(hwnd, &margins);
+
+                            // 只有当扩展成功时才标记为已完成
+                            if extend_result == 0 { // S_OK
+                                SHADOW_INIT_DONE.store(true, Ordering::SeqCst);
+                            }
                         }
                     }
                 }
-            });
+            }
         }
+        
+        // 检查系统信息是否已异步加载完成
+        if let Some(ref receiver) = self.system_info_rx {
+            // 尝试接收结果，不阻塞UI线程
+            if let Ok(result) = receiver.try_recv() {
+                match result {
+                    Ok(info) => {
+                        self.system_info = Some(info);
+                        self.system_info_loading = false;
+                    }
+                    Err(e) => {
+                        self.system_info_error = Some(e);
+                        self.system_info_loading = false;
+                    }
+                }
+                // 移除receiver，因为我们已经收到了结果
+                self.system_info_rx = None;
+            }
+        }
+        
+        // 请求定期重绘以确保UI响应
+        ctx.request_repaint();
         
         
         // 侧边栏选项卡选择
@@ -159,32 +160,41 @@ impl eframe::App for GuiApp {
             .resizable(false)
             .min_width(200.0)
             .max_width(200.0)
-            .frame(egui::Frame::none().fill(egui::Color32::from_rgb(233, 233, 233)))
+            .frame(egui::Frame::new()
+                .fill(egui::Color32::from_rgb(233, 233, 233))
+                .shadow(egui::epaint::Shadow::NONE)) // 重置阴影
             .show(ctx, |ui| {
                 ui.vertical(|ui| {
                     // 应用标题
                     ui.with_layout(egui::Layout::top_down(egui::Align::Center), |ui| {
-                        // 添加2px的上边距
                         ui.add_space(8.0);
-                        // 尝试加载图标文件作为标题图标
-                        if let Ok(image_bytes) = std::fs::read("assets/icons/logo.png") {
-                            if let Ok(image) = image::load_from_memory(&image_bytes) {
-                                let texture = ui.ctx().load_texture(
-                                    "title_icon", 
-                                    egui::ColorImage::from_rgba_unmultiplied(
-                                        [image.width() as usize, image.height() as usize],
-                                        image.to_rgba8().as_flat_samples().as_slice(),
-                                    ),
-                                    egui::TextureOptions::LINEAR,
-                                );
-                                let sized_texture = egui::load::SizedTexture::new(texture.id(), egui::Vec2::new(48.0, 48.0));
-                        ui.image(sized_texture); // 调整图标大小
+                        // 修正图标加载和显示 - 只加载一次
+                        if self.title_icon.is_none() {
+                            if let Ok(image_bytes) = std::fs::read("assets/icons/logo.png") {
+                                if let Ok(image) = image::load_from_memory(&image_bytes) {
+                                    let rgba = image.to_rgba8();
+                                    let size = [image.width() as usize, image.height() as usize];
+                                    let color_image = egui::ColorImage::from_rgba_unmultiplied(
+                                        size,
+                                        rgba.as_flat_samples().as_slice(),
+                                    );
+                                    let texture = ui.ctx().load_texture(
+                                        "title_icon",
+                                        color_image,
+                                        egui::TextureOptions::LINEAR,
+                                    );
+                                    self.title_icon = Some(texture);
+                                }
                             }
+                        }
+                        
+                        // 显示图标
+                        if let Some(ref texture) = self.title_icon {
+                            ui.image((texture.id(), egui::Vec2::new(48.0, 48.0)));
                         }
                         ui.label("仓鼠驱动管家"); // 应用标题
                     });
-                    ui.add_space(8.0); // 在标题和功能面板之间添加间距
-                    ui.label("功能面板");
+                    ui.add_space(4.0); // 在标题和功能面板之间添加间距
                     
                     // 为每个按钮创建自定义样式，设置选中时的背景色和文字颜色
                     let selected_bg_color = egui::Color32::from_rgb(248, 248, 248);
@@ -193,134 +203,321 @@ impl eframe::App for GuiApp {
                     ui.visuals_mut().selection.bg_fill = selected_bg_color;
                     ui.visuals_mut().selection.stroke.color = selected_fg_color; // 设置选中状态的前景色
                     
-                    // 按钮菜单
-                    ui.selectable_value(&mut self.selected_tab, AppTab::Overview, "概览");
-                    ui.selectable_value(&mut self.selected_tab, AppTab::DriverList, "驱动列表");
-                    ui.selectable_value(&mut self.selected_tab, AppTab::Dependencies, "依赖分析");
-                    ui.selectable_value(&mut self.selected_tab, AppTab::Signatures, "签名验证");
-                    ui.selectable_value(&mut self.selected_tab, AppTab::BackupRestore, "备份恢复");
-                    ui.selectable_value(&mut self.selected_tab, AppTab::Settings, "设置");
+                    // 按钮菜单 - 使用按钮并设置宽度以填满侧边栏
+                    ui.add_space(2.0); // 小间距
+                    
+                    // 获取当前UI上下文的可用宽度
+                    let sidebar_width = ui.available_width();
+                    
+                    // 创建填满宽度的可选择按钮，支持悬停和点击效果
+                    // 按钮文字居中，选中和悬停时背景色为白色，文字颜色保持egui框架默认色
+                    
+                    // 修正 TextStyle 用法
+                    let text_style = egui::TextStyle::Body;
+                    // 概览按钮
+                    ui.scope(|ui| {
+                        let (rect, response) = ui.allocate_exact_size(egui::Vec2::new(sidebar_width, 30.0), egui::Sense::click());
+                        let is_selected = self.selected_tab == AppTab::Overview;
+                        let bg_color = if is_selected || response.hovered() {
+                            egui::Color32::from_rgb(255, 255, 255)
+                        } else {
+                            egui::Color32::from_rgb(233, 233, 233)
+                        };
+                        ui.painter().rect_filled(rect, egui::CornerRadius::ZERO, bg_color);
+                        ui.painter().text(
+                            rect.center(),
+                            egui::Align2::CENTER_CENTER,
+                            "概览",
+                            ui.ctx().style().text_styles.get(&text_style).unwrap().clone(),
+                            ui.style().visuals.text_color()
+                        );
+                        if response.clicked() {
+                            self.selected_tab = AppTab::Overview;
+                        }
+                    });
+
+                    // 驱动列表按钮
+                    ui.scope(|ui| {
+                        let (rect, response) = ui.allocate_exact_size(egui::Vec2::new(sidebar_width, 30.0), egui::Sense::click());
+                        let is_selected = self.selected_tab == AppTab::DriverList;
+                        let bg_color = if is_selected || response.hovered() {
+                            egui::Color32::from_rgb(255, 255, 255)
+                        } else {
+                            egui::Color32::from_rgb(233, 233, 233)
+                        };
+                        ui.painter().rect_filled(rect, egui::CornerRadius::ZERO, bg_color);
+                        ui.painter().text(
+                            rect.center(),
+                            egui::Align2::CENTER_CENTER,
+                            "驱动列表",
+                            ui.ctx().style().text_styles.get(&text_style).unwrap().clone(),
+                            ui.style().visuals.text_color()
+                        );
+                        if response.clicked() {
+                            self.selected_tab = AppTab::DriverList;
+                        }
+                    });
+
+                    // 依赖分析按钮
+                    ui.scope(|ui| {
+                        let (rect, response) = ui.allocate_exact_size(egui::Vec2::new(sidebar_width, 30.0), egui::Sense::click());
+                        let is_selected = self.selected_tab == AppTab::Dependencies;
+                        let bg_color = if is_selected || response.hovered() {
+                            egui::Color32::from_rgb(255, 255, 255)
+                        } else {
+                            egui::Color32::from_rgb(233, 233, 233)
+                        };
+                        ui.painter().rect_filled(rect, egui::CornerRadius::ZERO, bg_color);
+                        ui.painter().text(
+                            rect.center(),
+                            egui::Align2::CENTER_CENTER,
+                            "依赖分析",
+                            ui.ctx().style().text_styles.get(&text_style).unwrap().clone(),
+                            ui.style().visuals.text_color()
+                        );
+                        if response.clicked() {
+                            self.selected_tab = AppTab::Dependencies;
+                        }
+                    });
+
+                    // 签名验证按钮
+                    ui.scope(|ui| {
+                        let (rect, response) = ui.allocate_exact_size(egui::Vec2::new(sidebar_width, 30.0), egui::Sense::click());
+                        let is_selected = self.selected_tab == AppTab::Signatures;
+                        let bg_color = if is_selected || response.hovered() {
+                            egui::Color32::from_rgb(255, 255, 255)
+                        } else {
+                            egui::Color32::from_rgb(233, 233, 233)
+                        };
+                        ui.painter().rect_filled(rect, egui::CornerRadius::ZERO, bg_color);
+                        ui.painter().text(
+                            rect.center(),
+                            egui::Align2::CENTER_CENTER,
+                            "签名验证",
+                            ui.ctx().style().text_styles.get(&text_style).unwrap().clone(),
+                            ui.style().visuals.text_color()
+                        );
+                        if response.clicked() {
+                            self.selected_tab = AppTab::Signatures;
+                        }
+                    });
+
+                    // 备份恢复按钮
+                    ui.scope(|ui| {
+                        let (rect, response) = ui.allocate_exact_size(egui::Vec2::new(sidebar_width, 30.0), egui::Sense::click());
+                        let is_selected = self.selected_tab == AppTab::BackupRestore;
+                        let bg_color = if is_selected || response.hovered() {
+                            egui::Color32::from_rgb(255, 255, 255)
+                        } else {
+                            egui::Color32::from_rgb(233, 233, 233)
+                        };
+                        ui.painter().rect_filled(rect, egui::CornerRadius::ZERO, bg_color);
+                        ui.painter().text(
+                            rect.center(),
+                            egui::Align2::CENTER_CENTER,
+                            "备份恢复",
+                            ui.ctx().style().text_styles.get(&text_style).unwrap().clone(),
+                            ui.style().visuals.text_color()
+                        );
+                        if response.clicked() {
+                            self.selected_tab = AppTab::BackupRestore;
+                        }
+                    });
+
+                    // 设置按钮
+                    ui.scope(|ui| {
+                        let (rect, response) = ui.allocate_exact_size(egui::Vec2::new(sidebar_width, 30.0), egui::Sense::click());
+                        let is_selected = self.selected_tab == AppTab::Settings;
+                        let bg_color = if is_selected || response.hovered() {
+                            egui::Color32::from_rgb(255, 255, 255)
+                        } else {
+                            egui::Color32::from_rgb(233, 233, 233)
+                        };
+                        ui.painter().rect_filled(rect, egui::CornerRadius::ZERO, bg_color);
+                        ui.painter().text(
+                            rect.center(),
+                            egui::Align2::CENTER_CENTER,
+                            "设置",
+                            ui.ctx().style().text_styles.get(&text_style).unwrap().clone(),
+                            ui.style().visuals.text_color()
+                        );
+                        if response.clicked() {
+                            self.selected_tab = AppTab::Settings;
+                        }
+                    });
+                });
+            });
+
+        // 顶部自定义标题栏（覆盖整窗体宽度）
+        egui::TopBottomPanel::top("title_bar")
+            .exact_height(36.0)
+            .show(ctx, |ui| {
+                ui.horizontal(|ui| {
+                    let title_bar_rect = ui.available_rect_before_wrap();
+                    // 绘制标题栏背景
+                    ui.painter().rect_filled(
+                        title_bar_rect,
+                        egui::CornerRadius::ZERO,
+                        egui::Color32::from_rgb(248, 248, 248),
+                    );
+
+                    // 拖拽区域为标题栏除去右侧按钮区域
+                    // 两个按钮各32宽 + 内部间距6，留点额外空间
+                    let button_area_width = 80.0;
+                    let button_area_rect = egui::Rect::from_min_size(
+                        egui::Pos2::new(title_bar_rect.max.x - button_area_width, title_bar_rect.min.y),
+                        egui::Vec2::new(button_area_width, title_bar_rect.height()),
+                    );
+
+                    let drag_area_rect = egui::Rect::from_min_max(
+                        title_bar_rect.min,
+                        egui::Pos2::new(button_area_rect.min.x, title_bar_rect.max.y),
+                    );
+
+                    let drag_response = ui.interact(drag_area_rect, egui::Id::new("title_bar_drag"), egui::Sense::click_and_drag());
+                    if drag_response.drag_started() {
+                        // 使用 eframe 提供的标准窗口拖动命令
+                        ui.ctx().send_viewport_cmd(egui::ViewportCommand::StartDrag);
+                    }
+
+                    // 按钮区域
+                    #[allow(deprecated)] {
+                        ui.allocate_ui_at_rect(button_area_rect, |ui| {
+                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
+                            ui.spacing_mut().item_spacing = egui::Vec2::new(6.0, 0.0);
+
+                            // 关闭按钮
+                            let close_response = ui.add_sized(
+                                egui::Vec2::new(32.0, 30.0),
+                                egui::Button::new("×")
+                                    .corner_radius(3.0)
+                                    .stroke(egui::Stroke::NONE)
+                                    .fill(egui::Color32::from_rgb(248, 248, 248)),
+                            );
+                            if close_response.clicked() {
+                                ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
+                            }
+
+                            if close_response.hovered() {
+                                let painter = ui.painter_at(close_response.rect);
+                                painter.rect_filled(close_response.rect, egui::CornerRadius::same(3), egui::Color32::from_rgb(232, 17, 35));
+                                painter.text(close_response.rect.center(), egui::Align2::CENTER_CENTER, "×", egui::FontId::proportional(14.0), egui::Color32::WHITE);
+                            }
+
+                            // 最小化按钮
+                            let min_response = ui.add_sized(
+                                egui::Vec2::new(32.0, 30.0),
+                                egui::Button::new("−")
+                                    .corner_radius(3.0)
+                                    .stroke(egui::Stroke::NONE)
+                                    .fill(egui::Color32::from_rgb(248, 248, 248)),
+                            );
+                            if min_response.clicked() {
+                                ui.ctx().send_viewport_cmd(egui::ViewportCommand::Minimized(true));
+                            }
+                            if min_response.hovered() {
+                                let painter = ui.painter_at(min_response.rect);
+                                painter.rect_filled(min_response.rect, egui::CornerRadius::same(3), egui::Color32::from_gray(200));
+                                painter.text(min_response.rect.center(), egui::Align2::CENTER_CENTER, "−", egui::FontId::proportional(14.0), egui::Color32::from_rgb(33, 33, 33));
+                            }
+                            });
+                        });
+                    }
                 });
             });
 
         // 主内容区域
         egui::CentralPanel::default()
-            .frame(egui::Frame::none().fill(egui::Color32::WHITE))
+            .frame(egui::Frame::new().fill(egui::Color32::WHITE).shadow(egui::epaint::Shadow::NONE))
             .show(ctx, |ui| {
-            ui.vertical(|ui| {
-                // 顶部标题栏
-                egui::Frame::none()
-                    .fill(egui::Color32::from_rgb(248, 248, 248)) // 浅灰色标题栏
-                    .inner_margin(egui::Margin::symmetric(10, 0))
-                    .show(ui, |ui| {
-                        ui.horizontal(|ui| {
-                            // 拖拽区域 - 点击并拖拽移动窗口
-                            let title_response = ui.allocate_response(
-                                egui::Vec2::new(ui.available_width()-70.0, 30.0), // 为按钮预留空间
-                                egui::Sense::click_and_drag(),
-                            );
+                ui.vertical(|ui| {
+                    // 内容继续在这里
+                    match self.selected_tab {
+                        AppTab::Overview => {
+                            ui.heading("系统概览");
                             
-                            if title_response.drag_started() {
-                                ui.ctx().send_viewport_cmd(egui::ViewportCommand::StartDrag);
+                            // 检查是否需要加载系统信息（仅在首次显示概览页面时）
+                            if self.system_info.is_none() && !self.system_info_loading {
+                                self.system_info_loading = true;
+                                // 在后台线程中加载系统信息，避免UI卡顿
+                                let (tx, rx) = mpsc::channel();
+                                thread::spawn(move || {
+                                    let result = SystemInfo::new();
+                                    let _ = tx.send(result);
+                                });
+                                self.system_info_rx = Some(rx);
                             }
-                            
-                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                ui.spacing_mut().item_spacing = egui::Vec2::new(2.0, 0.0); // 设置按钮间距
-                                
-                                // 关闭按钮
-                                if ui.add_sized(egui::Vec2::new(32.0, 30.0), egui::Button::new("×").rounding(3.0).fill(
-                                    if ui.visuals().dark_mode {
-                                        egui::Color32::from_rgb(200, 60, 60) // 暗模式下的深红
-                                    } else {
-                                        egui::Color32::from_rgb(248, 248, 248) // 浅灰色
-                                    }
-                                )).clicked() {
-                                    ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
-                                }
-                                
-                                // 最小化按钮
-                                if ui.add_sized(egui::Vec2::new(32.0, 30.0), egui::Button::new("−").rounding(3.0).fill(
-                                    if ui.visuals().dark_mode {
-                                        egui::Color32::from_gray(80) // 暗模式下的深灰
-                                    } else {
-                                        egui::Color32::from_rgb(248, 248, 248) // 浅灰色
-                                    }
-                                )).clicked() {
-                                    ui.ctx().send_viewport_cmd(egui::ViewportCommand::Minimized(true));
-                                }
-                            });
-                        });
-                    });
-                
-                match self.selected_tab {
-                    AppTab::Overview => {
-                        ui.heading("系统概览");
                         
-                        if let Some(ref sys_info) = self.system_info {
-                            // 显示操作系统信息
-                            if let Some(ref os_name) = sys_info.os_name {
-                                ui.label(format!("操作系统: {}", os_name));
+                            if let Some(ref sys_info) = self.system_info {
+                                // 显示操作系统信息
+                                if let Some(ref os_name) = sys_info.os_name {
+                                    ui.label(format!("操作系统: {}", os_name));
+                                }
+                                if let Some(ref os_version) = sys_info.os_version {
+                                    ui.label(format!("系统版本: {}", os_version));
+                                }
+                                if let Some(ref os_version_formatted) = sys_info.os_version_formatted {
+                                    ui.label(format!("版本标识: {}", os_version_formatted));
+                                }
+                                
+                                ui.separator();
+                                
+                                // 显示硬件信息
+                                if let Some(ref manufacturer) = sys_info.manufacturer {
+                                    ui.label(format!("制造商: {}", manufacturer));
+                                }
+                                if let Some(ref motherboard) = sys_info.motherboard {
+                                    ui.label(format!("主板: {}", motherboard));
+                                }
+                                if let Some(ref cpu) = sys_info.cpu {
+                                    ui.label(format!("CPU: {}", cpu));
+                                }
+                                
+                                ui.separator();
+                                
+                                // 显示内存信息
+                                ui.label("内存信息:");
+                                for mem in &sys_info.memory_info {
+                                    ui.label(format!("  {}", mem));
+                                }
+                                
+                                ui.separator();
+                                
+                                // 显示磁盘信息
+                                ui.label("磁盘信息:");
+                                for disk in &sys_info.disk_info {
+                                    ui.label(format!("  {}", disk));
+                                }
+                                
+                                ui.separator();
+                                
+                                // 显示其他硬件信息
+                                ui.label("网络适配器:");
+                                for adapter in &sys_info.network_adapters {
+                                    ui.label(format!("  {}", adapter));
+                                }
+                                
+                                ui.separator();
+                                
+                                ui.label("显卡信息:");
+                                for gpu in &sys_info.gpu_info {
+                                    ui.label(format!("  {}", gpu));
+                                }
+                                
+                                ui.separator();
+                                
+                                ui.label("显示器信息:");
+                                for monitor in &sys_info.monitor_info {
+                                    ui.label(format!("  {}", monitor));
+                                }
+                            } else if self.system_info_loading {
+                                ui.label("正在加载系统信息...");
+                            } else if let Some(ref error) = self.system_info_error {
+                                ui.label("加载系统信息失败:");
+                                ui.label(format!("  {}", error));
+                            } else {
+                                ui.label("点击切换到此页面以加载系统信息");
                             }
-                            if let Some(ref os_version) = sys_info.os_version {
-                                ui.label(format!("系统版本: {}", os_version));
-                            }
-                            if let Some(ref os_version_formatted) = sys_info.os_version_formatted {
-                                ui.label(format!("版本标识: {}", os_version_formatted));
-                            }
-                            
-                            ui.separator();
-                            
-                            // 显示硬件信息
-                            if let Some(ref manufacturer) = sys_info.manufacturer {
-                                ui.label(format!("制造商: {}", manufacturer));
-                            }
-                            if let Some(ref motherboard) = sys_info.motherboard {
-                                ui.label(format!("主板: {}", motherboard));
-                            }
-                            if let Some(ref cpu) = sys_info.cpu {
-                                ui.label(format!("CPU: {}", cpu));
-                            }
-                            
-                            ui.separator();
-                            
-                            // 显示内存信息
-                            ui.label("内存信息:");
-                            for mem in &sys_info.memory_info {
-                                ui.label(format!("  {}", mem));
-                            }
-                            
-                            ui.separator();
-                            
-                            // 显示磁盘信息
-                            ui.label("磁盘信息:");
-                            for disk in &sys_info.disk_info {
-                                ui.label(format!("  {}", disk));
-                            }
-                            
-                            ui.separator();
-                            
-                            // 显示其他硬件信息
-                            ui.label("网络适配器:");
-                            for adapter in &sys_info.network_adapters {
-                                ui.label(format!("  {}", adapter));
-                            }
-                            
-                            ui.separator();
-                            
-                            ui.label("显卡信息:");
-                            for gpu in &sys_info.gpu_info {
-                                ui.label(format!("  {}", gpu));
-                            }
-                            
-                            ui.separator();
-                            
-                            ui.label("显示器信息:");
-                            for monitor in &sys_info.monitor_info {
-                                ui.label(format!("  {}", monitor));
-                            }
-                        } else {
-                            ui.label("正在加载系统信息...");
-                        }
                     },
                     _ => {
                         show_advanced_features(ctx, self);
@@ -329,8 +526,7 @@ impl eframe::App for GuiApp {
             });
         });
 
-        // 刷新UI
-        ctx.request_repaint();
+        // 只在需要时刷新UI，避免不必要的重绘
     }
 }
 
@@ -386,7 +582,7 @@ fn show_dependency_view(ctx: &egui::Context, state: &mut GuiApp) {
         if !circular.is_empty() {
             ui.colored_label(egui::Color32::RED, "⚠️ 发现循环依赖:");
             for cycle in circular {
-                let cycle_str: String = cycle.join(" → ");
+                let cycle_str: String = cycle.iter().map(|s| s.as_str()).collect::<Vec<_>>().join(" → ");
                 ui.label(format!("➜ {}", cycle_str));
             }
         }

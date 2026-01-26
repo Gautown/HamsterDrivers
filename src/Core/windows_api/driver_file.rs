@@ -1,22 +1,29 @@
-use std::path::Path;
 
+#[allow(dead_code)]
 pub struct DriverFileInfo {
-    pub path: String,
-    pub size: u64,
-    pub version: String,
-    pub company: String,
-    pub date_modified: String,
+	pub path: String,
+	pub version: String,
+	pub company: String,
+	pub description: String,
+	pub signed: bool,
+	pub signature_status: String,
+	pub signature_hash: Vec<u8>,
+	pub timestamp: String,
 }
 
+#[allow(dead_code)]
 impl DriverFileInfo {
-    pub fn from_path(path: &str) -> Result<Self, String> {
-        // 模拟从路径获取驱动文件信息
-        Ok(DriverFileInfo {
-            path: path.to_string(),
-            size: 1024, // 模拟大小
-            version: "1.0.0.0".to_string(),
-            company: "Mock Company".to_string(),
-            date_modified: "2023-01-01".to_string(),
-        })
-    }
+	pub fn from_path(path: &str) -> Result<Self, String> {
+		// 返回模拟数据
+		Ok(Self {
+			path: path.to_string(),
+			version: "1.0.0.0".to_string(),
+			company: "Mock Company".to_string(),
+			description: "Mock Driver Description".to_string(),
+			signed: true,
+			signature_status: "Valid".to_string(),
+			signature_hash: vec![],
+			timestamp: chrono::Local::now().to_rfc3339(),
+		})
+	}
 }

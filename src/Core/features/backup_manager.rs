@@ -1,61 +1,67 @@
 use std::path::PathBuf;
-use crate::Core::driver_manager::DriverInfo;
+use serde::{Serialize, Deserialize};
+use crate::core::driver_manager::DriverInfo;
 
-#[derive(Debug)]
+#[allow(dead_code)]
+#[derive(Serialize, Deserialize)]
 pub struct BackupManifest {
-    pub backup_id: String,
-    pub created_at: String,
-    pub drivers: Vec<String>,
-    pub size: u64,
+	pub backup_id: String,
+	pub timestamp: String,
+	pub system_info: SystemInfo,
+	pub drivers: Vec<BackupDriverInfo>,
+	pub checksum: String,
 }
 
-#[derive(Debug)]
+#[derive(Serialize, Deserialize)]
 pub struct SystemInfo {
-    pub os_version: String,
-    pub architecture: String,
-    pub total_drivers: usize,
+	pub windows_version: String,
+	pub architecture: String,
+	pub build_number: String,
+	pub backup_tool_version: String,
 }
 
-#[derive(Debug)]
+#[allow(dead_code)]
+#[derive(Serialize, Deserialize)]
 pub struct BackupDriverInfo {
-    pub name: String,
-    pub original_path: String,
-    pub backup_path: String,
-    pub size: u64,
-    pub version: String,
+	pub name: String,
+	pub display_name: String,
+	pub file_name: String,
+	pub version: String,
+	pub registry_info: String,
+	pub backup_time: String,
 }
 
+#[allow(dead_code)]
 pub struct BackupManager {
-    backup_dir: PathBuf,
+	backup_dir: PathBuf,
 }
 
+#[allow(dead_code)]
 impl BackupManager {
-    pub fn new() -> Result<Self, String> {
-        let backup_dir = std::env::current_dir()
-            .map_err(|e| format!("Failed to get current dir: {}", e))?
-            .join("backups");
+	pub fn new() -> Result<Self, String> {
+		let backup_dir = PathBuf::from("./backups"); // 使用相对路径避免权限问题
         
-        std::fs::create_dir_all(&backup_dir)
-            .map_err(|e| format!("Failed to create backup dir: {}", e))?;
-
-        Ok(Self { backup_dir })
-    }
-
-    pub fn create_backup(&self, _drivers: &[DriverInfo]) -> Result<String, String> {
-        // 模拟备份创建过程
-        let backup_id = format!("backup_{}", chrono::Local::now().format("%Y%m%d_%H%M%S"));
+		if !backup_dir.exists() {
+			std::fs::create_dir_all(&backup_dir)
+				.map_err(|e| format!("Failed to create backup directory: {}", e))?;
+		}
         
-        // 在实际实现中，这里会复制驱动文件到备份目录
-        println!("Creating backup: {}", backup_id);
+		Ok(Self { backup_dir })
+	}
+    
+	pub fn create_backup(&self, _drivers: &[DriverInfo]) -> Result<String, String> {
+		// 模拟备份过程
+		let backup_id = format!(
+			"backup_{}",
+			chrono::Local::now().format("%Y%m%d_%H%M%S")
+		);
         
-        Ok(backup_id)
-    }
-
-    pub fn restore_backup(&self, backup_id: &str) -> Result<(), String> {
-        // 模拟备份恢复过程
-        println!("Restoring backup: {}", backup_id);
-        
-        // 在实际实现中，这里会从备份目录恢复驱动文件
-        Ok(())
-    }
+		println!("Created backup: {}", backup_id);
+		Ok(backup_id)
+	}
+    
+	pub fn restore_backup(&self, backup_id: &str) -> Result<(), String> {
+		println!("Restoring backup: {}", backup_id);
+		Ok(())
+	}
 }
