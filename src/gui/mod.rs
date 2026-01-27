@@ -138,10 +138,13 @@ impl eframe::App for GuiApp {
             if let Ok(result) = receiver.try_recv() {
                 match result {
                     Ok(info) => {
+                        println!("Received system info: {:?}", info);
+                        println!("Monitor info: {:?}", info.monitor_info);
                         self.system_info = Some(info);
                         self.system_info_loading = false;
                     }
                     Err(e) => {
+                        println!("System info error: {:?}", e);
                         self.system_info_error = Some(e);
                         self.system_info_loading = false;
                     }
@@ -190,7 +193,7 @@ impl eframe::App for GuiApp {
                         
                         // 显示图标
                         if let Some(ref texture) = self.title_icon {
-                            ui.image((texture.id(), egui::Vec2::new(48.0, 48.0)));
+                            ui.image((texture.id(), egui::Vec2::new(64.0, 64.0)));
                         }
                         ui.label("仓鼠驱动管家"); // 应用标题
                     });
@@ -431,100 +434,157 @@ impl eframe::App for GuiApp {
             .frame(egui::Frame::new().fill(egui::Color32::WHITE).shadow(egui::epaint::Shadow::NONE))
             .show(ctx, |ui| {
                 ui.vertical(|ui| {
-                    // 内容继续在这里
-                    match self.selected_tab {
-                        AppTab::Overview => {
-                            ui.heading("系统概览");
-                            
-                            // 检查是否需要加载系统信息（仅在首次显示概览页面时）
-                            if self.system_info.is_none() && !self.system_info_loading {
-                                self.system_info_loading = true;
-                                // 在后台线程中加载系统信息，避免UI卡顿
-                                let (tx, rx) = mpsc::channel();
-                                thread::spawn(move || {
-                                    let result = SystemInfo::new();
-                                    let _ = tx.send(result);
-                                });
-                                self.system_info_rx = Some(rx);
-                            }
-                        
-                            if let Some(ref sys_info) = self.system_info {
-                                // 显示操作系统信息
-                                if let Some(ref os_name) = sys_info.os_name {
-                                    ui.label(format!("操作系统: {}", os_name));
-                                }
-                                if let Some(ref os_version) = sys_info.os_version {
-                                    ui.label(format!("系统版本: {}", os_version));
-                                }
-                                if let Some(ref os_version_formatted) = sys_info.os_version_formatted {
-                                    ui.label(format!("版本标识: {}", os_version_formatted));
-                                }
-                                
-                                ui.separator();
-                                
-                                // 显示硬件信息
-                                if let Some(ref manufacturer) = sys_info.manufacturer {
-                                    ui.label(format!("制造商: {}", manufacturer));
-                                }
-                                if let Some(ref motherboard) = sys_info.motherboard {
-                                    ui.label(format!("主板: {}", motherboard));
-                                }
-                                if let Some(ref cpu) = sys_info.cpu {
-                                    ui.label(format!("CPU: {}", cpu));
-                                }
-                                
-                                ui.separator();
-                                
-                                // 显示内存信息
-                                ui.label("内存信息:");
-                                for mem in &sys_info.memory_info {
-                                    ui.label(format!("  {}", mem));
-                                }
-                                
-                                ui.separator();
-                                
-                                // 显示磁盘信息
-                                ui.label("磁盘信息:");
-                                for disk in &sys_info.disk_info {
-                                    ui.label(format!("  {}", disk));
-                                }
-                                
-                                ui.separator();
-                                
-                                // 显示其他硬件信息
-                                ui.label("网络适配器:");
-                                for adapter in &sys_info.network_adapters {
-                                    ui.label(format!("  {}", adapter));
-                                }
-                                
-                                ui.separator();
-                                
-                                ui.label("显卡信息:");
-                                for gpu in &sys_info.gpu_info {
-                                    ui.label(format!("  {}", gpu));
-                                }
-                                
-                                ui.separator();
-                                
-                                ui.label("显示器信息:");
-                                for monitor in &sys_info.monitor_info {
-                                    ui.label(format!("  {}", monitor));
-                                }
-                            } else if self.system_info_loading {
-                                ui.label("正在加载系统信息...");
-                            } else if let Some(ref error) = self.system_info_error {
-                                ui.label("加载系统信息失败:");
-                                ui.label(format!("  {}", error));
+                    // 添加左边距16px，右边预留滚动条位置
+                    ui.horizontal(|ui| {
+                        ui.add_space(16.0);
+                        ui.vertical(|ui| {
+                            // 为右边滚动条预留空间
+                            let scrollbar_width = 20.0;
+                            let available_width = ui.available_width();
+                            let content_width = if available_width > scrollbar_width {
+                                available_width - scrollbar_width
                             } else {
-                                ui.label("点击切换到此页面以加载系统信息");
+                                available_width
+                            };
+                            ui.set_width(content_width);
+                            
+                            // 内容继续在这里
+                            match self.selected_tab {
+                                AppTab::Overview => {
+                                    ui.heading("系统概览");
+                            
+                                    // 检查是否需要加载系统信息（仅在首次显示概览页面时）
+                                    if self.system_info.is_none() && !self.system_info_loading {
+                                        self.system_info_loading = true;
+                                        // 在后台线程中加载系统信息，避免UI卡顿
+                                        let (tx, rx) = mpsc::channel();
+                                        thread::spawn(move || {
+                                            let result = SystemInfo::new();
+                                            let _ = tx.send(result);
+                                        });
+                                        self.system_info_rx = Some(rx);
+                                    }
+                                
+                                    if let Some(ref sys_info) = self.system_info {
+                                        // 显示操作系统信息
+                                        if let Some(ref os_name) = sys_info.os_name {
+                                            ui.label(format!("操作系统: {}", os_name));
+                                        }
+                                        
+                                        // 显示版本信息：版本：yyHx格式
+                                        if let Some(ref os_version) = sys_info.os_version {
+                                            // 解析版本号，例如 "10.0.19045"
+                                            let version_parts: Vec<&str> = os_version.split('.').collect();
+                                            if version_parts.len() >= 2 {
+                                                let major_version = version_parts[0];
+                                                let feature_version = version_parts[1];
+                                                
+                                                // 将Windows版本号转换为yyHx格式
+                                                let yyhx_version = match (major_version, feature_version) {
+                                                    ("10", "0") => "21H2".to_string(),  // Windows 10 21H2
+                                                    ("10", "1") => "21H1".to_string(),  // Windows 10 21H1
+                                                    ("10", "2") => "22H2".to_string(),  // Windows 11 22H2
+                                                    ("10", "3") => "23H2".to_string(),  // Windows 11 23H2
+                                                    ("10", "4") => "24H2".to_string(),  // Windows 11 24H2
+                                                    ("10", "5") => "25H2".to_string(),  // Windows 11 25H2
+                                                    ("6", "3") => "13H2".to_string(),   // Windows 8.1
+                                                    ("6", "2") => "12H2".to_string(),   // Windows 8
+                                                    ("6", "1") => "11H1".to_string(),   // Windows 7 SP1
+                                                    ("6", "0") => "08H2".to_string(),   // Windows Vista SP2
+                                                    ("5", "1") => "01H2".to_string(),   // Windows XP SP3
+                                                    ("5", "0") => "00H1".to_string(),   // Windows 2000
+                                                    _ => format!("{}H{}", major_version, feature_version)
+                                                };
+                                                
+                                                ui.label(format!("版本: {}", yyhx_version));
+                                            } else {
+                                                ui.label(format!("版本: {}", os_version));
+                                            }
+                                        }
+                                        
+                                        // 显示版本号：操作系统版本
+                                        if let Some(ref os_version) = sys_info.os_version {
+                                            ui.label(format!("版本号: {}", os_version));
+                                        }
+                                        
+                                        // 显示版本号：内部版本号
+                                        if let Some(ref os_version_formatted) = sys_info.os_version_formatted {
+                                            // 从格式化版本中提取内部版本号
+                                            if let Some(build_start) = os_version_formatted.find("Build") {
+                                                let build_part = &os_version_formatted[build_start..];
+                                                ui.label(format!("版本号: {}", build_part));
+                                            } else {
+                                                ui.label(format!("版本号: {}", os_version_formatted));
+                                            }
+                                        }
+                                        
+                                        ui.separator();
+                                        
+                                        // 显示硬件信息
+                                        if let Some(ref manufacturer) = sys_info.manufacturer {
+                                            ui.label(format!("制造商: {}", manufacturer));
+                                        }
+                                        if let Some(ref motherboard) = sys_info.motherboard {
+                                            ui.label(format!("主板: {}", motherboard));
+                                        }
+                                        if let Some(ref cpu) = sys_info.cpu {
+                                            ui.label(format!("CPU: {}", cpu));
+                                        }
+                                        
+                                        ui.separator();
+                                        
+                                        // 显示内存信息
+                                        ui.label("内存信息:");
+                                        for mem in &sys_info.memory_info {
+                                            ui.label(format!("  {}", mem));
+                                        }
+                                        
+                                        ui.separator();
+                                        
+                                        // 显示磁盘信息
+                                        ui.label("磁盘信息:");
+                                        for disk in &sys_info.disk_info {
+                                            ui.label(format!("  {}", disk));
+                                        }
+                                        
+                                        ui.separator();
+                                        
+                                        // 显示其他硬件信息
+                                        ui.label("网络适配器:");
+                                        for adapter in &sys_info.network_adapters {
+                                            ui.label(format!("  {}", adapter));
+                                        }
+                                        
+                                        ui.separator();
+                                        
+                                        ui.label("显卡信息:");
+                                        for gpu in &sys_info.gpu_info {
+                                            ui.label(format!("  {}", gpu));
+                                        }
+                                        
+                                        ui.separator();
+                                        
+                                        ui.label("显示器信息:");
+                                        for monitor in &sys_info.monitor_info {
+                                            ui.label(format!("  {}", monitor));
+                                        }
+                                    } else if self.system_info_loading {
+                                        ui.label("正在加载系统信息...");
+                                    } else if let Some(ref error) = self.system_info_error {
+                                        ui.label("加载系统信息失败:");
+                                        ui.label(format!("  {}", error));
+                                    } else {
+                                        ui.label("点击切换到此页面以加载系统信息");
+                                    }
+                                },
+                                _ => {
+                                    show_advanced_features(ctx, self);
+                                }
                             }
-                    },
-                    _ => {
-                        show_advanced_features(ctx, self);
-                    }
-                };
+                        });
+                    });
+                });
             });
-        });
 
         // 只在需要时刷新UI，避免不必要的重绘
     }

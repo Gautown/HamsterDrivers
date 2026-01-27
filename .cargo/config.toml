@@ -1,4 +1,4 @@
 # 构建优化
 [build]
 incremental = true
-jobs = 16
+jobs = 8

@@ -1,4 +1,6 @@
 // src/main.rs - 前后端分离架构入口
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+
 mod core;
 mod gui;
 

@@ -3,7 +3,7 @@ $ErrorActionPreference = "Stop"
 
 # 设置变量
 $APP_NAME = "仓鼠驱动管家"
-$VERSION = "1.0.0"
+$VERSION = "0.0.1"
 $OUTPUT_DIR = "dist"
 $INSTALLER_DIR = "installer"
 
@@ -13,10 +13,10 @@ New-Item -ItemType Directory -Path $OUTPUT_DIR -Force
 
 # 构建发布版本
 Write-Host "Building release version..." -ForegroundColor Green
-cargo build --release --target x86_64-pc-windows-msvc
+cargo build --release --target x86_64-pc-windows-gnu
 
 # 复制文件
-$RELEASE_DIR = "target\x86_64-pc-windows-msvc\release"
+$RELEASE_DIR = "target\x86_64-pc-windows-gnu\release"
 $BIN_FILES = @(
     "hamster-driver-manager.exe",
     "hamster-driver-manager.pdb"
