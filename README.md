@@ -1,7 +1,7 @@
 # 仓鼠驱动管家 (Hamster Driver Manager)
 
 一个现代化的 Windows 驱动管理工具，帮助用户轻松管理和维护系统驱动程序。
-
+![HamsterDriversUI](HamsterDriversUI.png)
 ## 功能特性
 
 - 驱动扫描和检测
