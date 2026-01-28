@@ -2,7 +2,7 @@
 use eframe::egui;
 use crate::core::sysinfo::SystemInfo;
 // 新增导入 image crate
-use image::GenericImageView;
+
 use std::sync::mpsc;
 use std::thread;
 #[allow(dead_code)]
@@ -354,15 +354,18 @@ impl eframe::App for GuiApp {
         // 顶部自定义标题栏（覆盖整窗体宽度）
         egui::TopBottomPanel::top("title_bar")
             .exact_height(36.0)
+            .frame(egui::Frame::NONE) // 移除边框和阴影
             .show(ctx, |ui| {
+                // 首先绘制整个标题栏背景
+                let full_title_bar_rect = ui.available_rect_before_wrap();
+                ui.painter().rect_filled(
+                    full_title_bar_rect,
+                    egui::CornerRadius::ZERO,
+                    egui::Color32::from_rgb(248, 248, 248),
+                );
+                
                 ui.horizontal(|ui| {
                     let title_bar_rect = ui.available_rect_before_wrap();
-                    // 绘制标题栏背景
-                    ui.painter().rect_filled(
-                        title_bar_rect,
-                        egui::CornerRadius::ZERO,
-                        egui::Color32::from_rgb(248, 248, 248),
-                    );
 
                     // 拖拽区域为标题栏除去右侧按钮区域
                     // 两个按钮各32宽 + 内部间距6，留点额外空间
@@ -386,12 +389,19 @@ impl eframe::App for GuiApp {
                     // 按钮区域
                     #[allow(deprecated)] {
                         ui.allocate_ui_at_rect(button_area_rect, |ui| {
+                            // 在按钮区域内部绘制背景
+                            let button_area_inner_rect = ui.available_rect_before_wrap();
+                            ui.painter().rect_filled(
+                                button_area_inner_rect,
+                                egui::CornerRadius::ZERO,
+                                egui::Color32::from_rgb(248, 248, 248),
+                            );
                             ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
                             ui.spacing_mut().item_spacing = egui::Vec2::new(6.0, 0.0);
 
                             // 关闭按钮
                             let close_response = ui.add_sized(
-                                egui::Vec2::new(32.0, 30.0),
+                                egui::Vec2::new(32.0, 36.0),
                                 egui::Button::new("×")
                                     .corner_radius(3.0)
                                     .stroke(egui::Stroke::NONE)
@@ -409,7 +419,7 @@ impl eframe::App for GuiApp {
 
                             // 最小化按钮
                             let min_response = ui.add_sized(
-                                egui::Vec2::new(32.0, 30.0),
+                                egui::Vec2::new(32.0, 36.0),
                                 egui::Button::new("−")
                                     .corner_radius(3.0)
                                     .stroke(egui::Stroke::NONE)
@@ -471,51 +481,25 @@ impl eframe::App for GuiApp {
                                             ui.label(format!("操作系统: {}", os_name));
                                         }
                                         
-                                        // 显示版本信息：版本：yyHx格式
-                                        if let Some(ref os_version) = sys_info.os_version {
-                                            // 解析版本号，例如 "10.0.19045"
-                                            let version_parts: Vec<&str> = os_version.split('.').collect();
-                                            if version_parts.len() >= 2 {
-                                                let major_version = version_parts[0];
-                                                let feature_version = version_parts[1];
-                                                
-                                                // 将Windows版本号转换为yyHx格式
-                                                let yyhx_version = match (major_version, feature_version) {
-                                                    ("10", "0") => "21H2".to_string(),  // Windows 10 21H2
-                                                    ("10", "1") => "21H1".to_string(),  // Windows 10 21H1
-                                                    ("10", "2") => "22H2".to_string(),  // Windows 11 22H2
-                                                    ("10", "3") => "23H2".to_string(),  // Windows 11 23H2
-                                                    ("10", "4") => "24H2".to_string(),  // Windows 11 24H2
-                                                    ("10", "5") => "25H2".to_string(),  // Windows 11 25H2
-                                                    ("6", "3") => "13H2".to_string(),   // Windows 8.1
-                                                    ("6", "2") => "12H2".to_string(),   // Windows 8
-                                                    ("6", "1") => "11H1".to_string(),   // Windows 7 SP1
-                                                    ("6", "0") => "08H2".to_string(),   // Windows Vista SP2
-                                                    ("5", "1") => "01H2".to_string(),   // Windows XP SP3
-                                                    ("5", "0") => "00H1".to_string(),   // Windows 2000
-                                                    _ => format!("{}H{}", major_version, feature_version)
-                                                };
-                                                
-                                                ui.label(format!("版本: {}", yyhx_version));
+                                        // 显示版本信息：使用更准确的方法获取Windows版本
+                                        if let Some(ref os_name) = sys_info.os_name {
+                                            // 根据操作系统名称和版本号判断Windows版本
+                                            let version_display = if let Some(ref os_version) = sys_info.os_version {
+                                                SystemInfo::get_windows_version_display(os_name, os_version)
                                             } else {
-                                                ui.label(format!("版本: {}", os_version));
-                                            }
+                                                "未知版本".to_string()
+                                            };
+                                            ui.label(format!("版本: {}", version_display));
                                         }
                                         
-                                        // 显示版本号：操作系统版本
+                                        // 显示操作系统版本号
                                         if let Some(ref os_version) = sys_info.os_version {
                                             ui.label(format!("版本号: {}", os_version));
                                         }
                                         
-                                        // 显示版本号：内部版本号
+                                        // 显示内部版本号
                                         if let Some(ref os_version_formatted) = sys_info.os_version_formatted {
-                                            // 从格式化版本中提取内部版本号
-                                            if let Some(build_start) = os_version_formatted.find("Build") {
-                                                let build_part = &os_version_formatted[build_start..];
-                                                ui.label(format!("版本号: {}", build_part));
-                                            } else {
-                                                ui.label(format!("版本号: {}", os_version_formatted));
-                                            }
+                                            ui.label(format!("内部版本: {}", os_version_formatted));
                                         }
                                         
                                         ui.separator();
@@ -665,3 +649,4 @@ fn show_dependency_view(ctx: &egui::Context, state: &mut GuiApp) {
         }
     });
 }
+
