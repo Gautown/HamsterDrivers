@@ -1,17 +1,9 @@
 # 构建输出
-/.astro
-/dist
-/output
-/build
 /target/
 **/target/
 
 # 依赖管理
-/node_modules
-/.npm
-/.yarn
-/yarn.lock
-/package-lock.json
+/.cargo/
 
 # IDE文件
 .vscode/

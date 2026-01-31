@@ -293,6 +293,7 @@ impl eframe::App for GuiApp {
                     // 为每个按钮创建自定义样式，设置选中时的背景色和文字颜色
                     let selected_bg_color = egui::Color32::WHITE; // 选中时背景色为白色
                     let selected_fg_color = egui::Color32::from_rgb(13, 160, 253); // 选中时文字颜色为侧边栏蓝色
+                    let hover_bg_color = egui::Color32::from_rgba_premultiplied(255, 255, 255, 8); // 悬停时背景色为接近完全透明的白色 (rgba(255,255,255,0.03))
                     
                     ui.visuals_mut().selection.bg_fill = selected_bg_color;
                     ui.visuals_mut().selection.stroke.color = selected_fg_color; // 设置选中状态的前景色
@@ -306,8 +307,8 @@ impl eframe::App for GuiApp {
                     // 创建填满宽度的可选择按钮，支持悬停和点击效果
                     // 按钮文字居中，选中和悬停时背景色为白色，文字颜色保持egui框架默认色
                     
-                    // 修正 TextStyle 用法
-                    let text_style = egui::TextStyle::Body;
+                    // 使用自定义字体大小
+                    let font_id = egui::FontId::new(14.0, egui::FontFamily::Proportional);
                     // 概览按钮
                     ui.scope(|ui| {
                         let (rect, response) = ui.allocate_exact_size(egui::Vec2::new(sidebar_width, 30.0), egui::Sense::click());
@@ -317,14 +318,18 @@ impl eframe::App for GuiApp {
                         if _is_selected {
                             ui.painter().rect_filled(rect, egui::CornerRadius::ZERO, selected_bg_color);
                         }
+                        // 绘制悬停状态背景
+                        else if response.hovered() {
+                            ui.painter().rect_filled(rect, egui::CornerRadius::ZERO, hover_bg_color);
+                        }
                         
                         ui.painter().text(
-                            rect.center(),
-                            egui::Align2::CENTER_CENTER,
-                            "电脑概览",
-                            ui.ctx().style().text_styles.get(&text_style).unwrap().clone(),
-                            if _is_selected { selected_fg_color } else { egui::Color32::from_rgb(242, 242, 242) }
-                        );
+                                rect.center(),
+                                egui::Align2::CENTER_CENTER,
+                                "电脑概览",
+                                font_id.clone(),
+                                if _is_selected || response.hovered() { selected_fg_color } else { egui::Color32::from_rgb(242, 242, 242) }
+                            );
                         if response.clicked() {
                             self.selected_tab = AppTab::Overview;
                         }
