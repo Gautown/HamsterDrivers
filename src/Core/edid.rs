@@ -57,12 +57,8 @@ pub fn get_edid_info(wmi_con: &WMIConnection) -> Result<Vec<EdidInfo>, String> {
                         .collect();
                     
                     if !manufacturer_bytes.is_empty() {
-                        let manufacturer = String::from_utf8(manufacturer_bytes.clone())
-                            .unwrap_or_else(|_| {
-                                manufacturer_bytes.iter()
-                                    .map(|&b| b as char)
-                                    .collect()
-                            });
+                        // 尝试多种编码格式
+                        let manufacturer = decode_manufacturer_name(&manufacturer_bytes);
                         edid_info.manufacturer = manufacturer.trim().to_string();
                     }
                 }
@@ -82,12 +78,8 @@ pub fn get_edid_info(wmi_con: &WMIConnection) -> Result<Vec<EdidInfo>, String> {
                         .collect();
                     
                     if !product_bytes.is_empty() {
-                        let product = String::from_utf8(product_bytes.clone())
-                            .unwrap_or_else(|_| {
-                                product_bytes.iter()
-                                    .map(|&b| b as char)
-                                    .collect()
-                            });
+                        // 尝试多种编码格式
+                        let product = decode_manufacturer_name(&product_bytes);
                         edid_info.product_code = product.trim().to_string();
                     }
                 }
@@ -204,29 +196,31 @@ pub fn get_edid_info(wmi_con: &WMIConnection) -> Result<Vec<EdidInfo>, String> {
 pub fn format_edid_info(edid_info: &EdidInfo) -> String {
     let mut parts = Vec::new();
     
+    // 制造商
     if !edid_info.manufacturer.is_empty() {
         parts.push(edid_info.manufacturer.clone());
+    } else {
+        parts.push("未知制造商".to_string());
     }
     
+    // 型号
     if !edid_info.product_code.is_empty() {
         parts.push(edid_info.product_code.clone());
+    } else {
+        parts.push("未知型号".to_string());
     }
     
-    // 添加屏幕尺寸信息
+    // 屏幕尺寸（英寸）
     if let (Some(width), Some(height)) = (edid_info.screen_size_horizontal, edid_info.screen_size_vertical) {
         if width > 0 && height > 0 {
-            parts.push(format!("{}x{}cm", width, height));
-        }
-    }
-    
-    // 添加制造日期信息
-    if edid_info.manufacture_year > 0 {
-        let year = 1990 + edid_info.manufacture_year as u16;
-        if edid_info.manufacture_week > 0 {
-            parts.push(format!("制造: {}年{}周", year, edid_info.manufacture_week));
+            // 转换为英寸（1英寸=2.54厘米）
+            let diagonal_inches = ((width as f32).powi(2) + (height as f32).powi(2)).sqrt() / 2.54;
+            parts.push(format!("{:.0}英寸", diagonal_inches.round()));
         } else {
-            parts.push(format!("制造: {}年", year));
+            parts.push("未知尺寸".to_string());
         }
+    } else {
+        parts.push("未知尺寸".to_string());
     }
     
     if parts.is_empty() {
@@ -234,6 +228,36 @@ pub fn format_edid_info(edid_info: &EdidInfo) -> String {
     } else {
         parts.join("-")
     }
+}
+
+/// 解码制造商名称，处理多种字符编码
+fn decode_manufacturer_name(bytes: &[u8]) -> String {
+    // 首先尝试UTF-8
+    if let Ok(s) = String::from_utf8(bytes.to_vec()) {
+        let trimmed = s.trim_matches('\0').trim();
+        if !trimmed.is_empty() && !trimmed.chars().all(|c| c == '\0' || c.is_control()) {
+            return trimmed.to_string();
+        }
+    }
+    
+    // 尝试ASCII（直接映射）
+    let ascii_str: String = bytes.iter()
+        .filter(|&&b| b != 0)
+        .map(|&b| {
+            if b >= 32 && b <= 126 {
+                b as char
+            } else {
+                '?' // 替换不可打印字符
+            }
+        })
+        .collect();
+    
+    if !ascii_str.trim().is_empty() {
+        return ascii_str.trim().to_string();
+    }
+    
+    // 如果都失败，返回未知
+    "未知制造商".to_string()
 }
 
 /// 使用PowerShell直接获取显示器信息
@@ -245,15 +269,37 @@ pub fn get_direct_monitor_info() -> Result<Vec<String>, String> {
         .args([
             "-WindowStyle", "Hidden",
             "-Command",
-            "Get-WmiObject -Namespace root\\wmi -Class WmiMonitorID | ForEach-Object { 
-                $manufacturer = [System.Text.Encoding]::ASCII.GetString($_.ManufacturerName).TrimEnd('\\0', ' ')
-                $product = [System.Text.Encoding]::ASCII.GetString($_.ProductCodeID).TrimEnd('\\0', ' ')
+            "[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; 
+            Get-WmiObject -Namespace root\\wmi -Class WmiMonitorID | ForEach-Object { 
+                # 使用UTF-8编码处理制造商名称
+                $manufacturerBytes = $_.ManufacturerName | Where-Object { $_ -ne 0 }
+                $manufacturer = [System.Text.Encoding]::UTF8.GetString($manufacturerBytes).Trim()
+                if ([string]::IsNullOrEmpty($manufacturer)) {
+                    $manufacturer = [System.Text.Encoding]::ASCII.GetString($manufacturerBytes).Trim()
+                }
+                
+                # 使用UTF-8编码处理产品代码
+                $productBytes = $_.ProductCodeID | Where-Object { $_ -ne 0 }
+                $product = [System.Text.Encoding]::UTF8.GetString($productBytes).Trim()
+                if ([string]::IsNullOrEmpty($product)) {
+                    $product = [System.Text.Encoding]::ASCII.GetString($productBytes).Trim()
+                }
+                
                 if ($manufacturer -and $product -and $manufacturer -ne '0000' -and $manufacturer.Length -gt 2) {
                     Write-Output (\"$manufacturer-$product\")
                 }
             }; 
             Get-WmiObject -Class Win32_DesktopMonitor | Where-Object { $_.MonitorManufacturer -ne $null -and $_.MonitorManufacturer -ne 'None' -and $_.MonitorManufacturer -ne '(标准监视器类型)' } | ForEach-Object { 
                 Write-Output (\"$($_.MonitorManufacturer)-$($_.Name)\")
+            };
+            # 尝试获取屏幕尺寸信息
+            Get-WmiObject -Namespace root\\wmi -Class WmiMonitorBasicDisplayParams | ForEach-Object { 
+                if ($_.MaxHorizontalImageSize -and $_.MaxVerticalImageSize) {
+                    $width = $_.MaxHorizontalImageSize
+                    $height = $_.MaxVerticalImageSize
+                    $diagonal = [Math]::Sqrt($width * $width + $height * $height) / 2.54
+                    Write-Output (\"尺寸:$([Math]::Round($diagonal))英寸\")
+                }
             }"
         ])
         .creation_flags(0x08000000) // CREATE_NO_WINDOW
@@ -264,30 +310,70 @@ pub fn get_direct_monitor_info() -> Result<Vec<String>, String> {
             let stdout = String::from_utf8_lossy(&output.stdout);
             let lines: Vec<&str> = stdout.lines().collect();
             
-            for (i, line) in lines.iter().enumerate() {
+            // 分离显示器信息和尺寸信息
+            let mut monitor_lines = Vec::new();
+            let mut size_lines = Vec::new();
+            
+            for line in &lines {
                 let trimmed = line.trim();
                 if !trimmed.is_empty() {
-                    // 获取当前分辨率信息
-                    let resolution_output = Command::new("powershell")
-                        .args([
-                            "-WindowStyle", "Hidden",
-                            "-Command",
-                            "Get-WmiObject -Class Win32_VideoController | Select-Object -First 1 | ForEach-Object { 
-                                Write-Output (\"$($_.CurrentHorizontalResolution)x$($_.CurrentVerticalResolution)@$($_.CurrentRefreshRate)Hz\")
-                            }"
-                        ])
-                        .creation_flags(0x08000000) // CREATE_NO_WINDOW
-                        .output();
-                    
-                    let resolution = match resolution_output {
-                        Ok(res_output) if res_output.status.success() => {
-                            String::from_utf8_lossy(&res_output.stdout).trim().to_string()
-                        }
-                        _ => "?x?@?Hz".to_string()
-                    };
-                    
-                    monitor_info.push(format!("显示器{}：{}-{}", i + 1, trimmed, resolution));
+                    if trimmed.starts_with("尺寸:") {
+                        size_lines.push(trimmed);
+                    } else {
+                        monitor_lines.push(trimmed);
+                    }
                 }
+            }
+            
+            for (i, monitor_line) in monitor_lines.iter().enumerate() {
+                // 获取当前分辨率信息
+                let resolution_output = Command::new("powershell")
+                    .args([
+                        "-WindowStyle", "Hidden",
+                        "-Command",
+                        "Get-WmiObject -Class Win32_VideoController | Where-Object { $_.CurrentHorizontalResolution -ne $null -and $_.CurrentHorizontalResolution -gt 0 } | ForEach-Object { 
+                            $width = $_.CurrentHorizontalResolution
+                            $height = $_.CurrentVerticalResolution
+                            $refresh = if ($_.CurrentRefreshRate) { $_.CurrentRefreshRate } else { '?' }
+                            Write-Output (\"${width}x${height}@${refresh}Hz\")
+                        }"
+                    ])
+                    .creation_flags(0x08000000) // CREATE_NO_WINDOW
+                    .output();
+                
+                let resolution = match resolution_output {
+                    Ok(res_output) if res_output.status.success() => {
+                        let stdout = String::from_utf8_lossy(&res_output.stdout);
+                        let lines: Vec<&str> = stdout.lines().collect();
+                        if !lines.is_empty() {
+                            lines[0].trim().to_string()
+                        } else {
+                            "?x?@?Hz".to_string()
+                        }
+                    }
+                    _ => "?x?@?Hz".to_string()
+                };
+                
+                // 获取对应的屏幕尺寸
+                let screen_size = if i < size_lines.len() {
+                    let size_str = size_lines[i];
+                    if size_str.starts_with("尺寸:") {
+                        size_str.replace("尺寸:", "")
+                    } else {
+                        "未知尺寸".to_string()
+                    }
+                } else {
+                    "未知尺寸".to_string()
+                };
+                
+                // 格式化为：制造商-型号-屏幕尺寸-分辨率@刷新率
+                let parts: Vec<&str> = monitor_line.split('-').collect();
+                let formatted_info = if parts.len() >= 2 {
+                    format!("{}-{}-{}", monitor_line, screen_size, resolution)
+                } else {
+                    format!("{}-未知型号-{}-{}", monitor_line, screen_size, resolution)
+                };
+                monitor_info.push(formatted_info);
             }
             
             if monitor_info.is_empty() {
@@ -296,8 +382,11 @@ pub fn get_direct_monitor_info() -> Result<Vec<String>, String> {
                     .args([
                         "-WindowStyle", "Hidden",
                         "-Command",
-                        "Get-WmiObject -Class Win32_VideoController | ForEach-Object { 
-                            Write-Output (\"$($_.CurrentHorizontalResolution)x$($_.CurrentVerticalResolution)@$($_.CurrentRefreshRate)Hz\")
+                        "Get-WmiObject -Class Win32_VideoController | Where-Object { $_.CurrentHorizontalResolution -ne $null -and $_.CurrentHorizontalResolution -gt 0 } | ForEach-Object { 
+                            $width = $_.CurrentHorizontalResolution
+                            $height = $_.CurrentVerticalResolution
+                            $refresh = if ($_.CurrentRefreshRate) { $_.CurrentRefreshRate } else { '?' }
+                            Write-Output (\"${width}x${height}@${refresh}Hz\")
                         }"
                     ])
                     .creation_flags(0x08000000) // CREATE_NO_WINDOW
@@ -309,11 +398,12 @@ pub fn get_direct_monitor_info() -> Result<Vec<String>, String> {
                         let lines: Vec<&str> = stdout.lines().collect();
                         
                         for (i, line) in lines.iter().enumerate() {
-                            let trimmed = line.trim();
-                            if !trimmed.is_empty() {
-                                monitor_info.push(format!("显示器{}：{}", i + 1, trimmed));
-                            }
-                        }
+                    let trimmed = line.trim();
+                    if !trimmed.is_empty() {
+                        // 格式化为：未知制造商-未知型号-未知尺寸-分辨率@刷新率
+                        monitor_info.push(format!("未知制造商-未知型号-未知尺寸-{}", trimmed));
+                    }
+                }
                     }
                     _ => {}
                 }
@@ -391,7 +481,8 @@ pub fn get_complete_monitor_info(wmi_con: &WMIConnection) -> Result<Vec<String>,
             "?x?@?Hz"
         };
         
-        monitor_info.push(format!("显示器{}：{}-{}", i + 1, edid_str, res_info));
+        // 格式化为：制造商-型号-屏幕尺寸-分辨率@刷新率
+        monitor_info.push(format!("{}-{}", edid_str, res_info));
     }
     
     // 如果没有获取到EDID信息，但获取到了分辨率信息
