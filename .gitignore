@@ -40,5 +40,3 @@ temp/
 .env.test.local
 .env.production.local
 
-# Astro特定
-/.astro
