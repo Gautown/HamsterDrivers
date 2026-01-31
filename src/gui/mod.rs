@@ -123,8 +123,8 @@ impl GuiApp {
                         // 创建Pixmap进行渲染
                         let mut pixmap = Pixmap::new(target_size.0, target_size.1).unwrap();
                         
-                        // 渲染SVG到Pixmap - 先填充白色背景
-                        pixmap.fill(tiny_skia::Color::WHITE);
+                        // 渲染SVG到Pixmap - 先填充透明背景
+                        pixmap.fill(tiny_skia::Color::TRANSPARENT);
                         let rtree = resvg::Tree::from_usvg(&tree);
                         rtree.render(Transform::default(), &mut pixmap.as_mut());
                         
@@ -293,7 +293,7 @@ impl eframe::App for GuiApp {
                     // 为每个按钮创建自定义样式，设置选中时的背景色和文字颜色
                     let selected_bg_color = egui::Color32::WHITE; // 选中时背景色为白色
                     let selected_fg_color = egui::Color32::from_rgb(13, 160, 253); // 选中时文字颜色为侧边栏蓝色
-                    let hover_bg_color = egui::Color32::from_rgba_premultiplied(255, 255, 255, 8); // 悬停时背景色为接近完全透明的白色 (rgba(255,255,255,0.03))
+                    let hover_bg_color = egui::Color32::from_rgba_premultiplied(245, 245, 245, 8); // 悬停时背景色为接近完全透明的白色 (rgba(245,245,245,0.03))
                     
                     ui.visuals_mut().selection.bg_fill = selected_bg_color;
                     ui.visuals_mut().selection.stroke.color = selected_fg_color; // 设置选中状态的前景色
@@ -344,13 +344,17 @@ impl eframe::App for GuiApp {
                         if _is_selected {
                             ui.painter().rect_filled(rect, egui::CornerRadius::ZERO, selected_bg_color);
                         }
+                        // 绘制悬停状态背景
+                        else if response.hovered() {
+                            ui.painter().rect_filled(rect, egui::CornerRadius::ZERO, hover_bg_color);
+                        }
                         
                         ui.painter().text(
                             rect.center(),
                             egui::Align2::CENTER_CENTER,
                             "驱动安装",
-                            ui.ctx().style().text_styles.get(&text_style).unwrap().clone(),
-                            if _is_selected { selected_fg_color } else { egui::Color32::from_rgb(242, 242, 242) }
+                            font_id.clone(),
+                            if _is_selected || response.hovered() { selected_fg_color } else { egui::Color32::from_rgb(242, 242, 242) }
                         );
                         if response.clicked() {
                             self.selected_tab = AppTab::DriverInstall;
@@ -366,6 +370,10 @@ impl eframe::App for GuiApp {
                         if _is_selected {
                             ui.painter().rect_filled(rect, egui::CornerRadius::ZERO, selected_bg_color);
                         }
+                        // 绘制悬停状态背景
+                        else if response.hovered() {
+                            ui.painter().rect_filled(rect, egui::CornerRadius::ZERO, hover_bg_color);
+                        }
                         
                         // 绘制文本
                         let text = "驱动管理";
@@ -374,8 +382,8 @@ impl eframe::App for GuiApp {
                             rect.center(),
                             egui::Align2::CENTER_CENTER,
                             &text,
-                            ui.ctx().style().text_styles.get(&text_style).unwrap().clone(),
-                            if _is_selected { selected_fg_color } else { egui::Color32::from_rgb(242, 242, 242) }
+                            font_id.clone(),
+                            if _is_selected || response.hovered() { selected_fg_color } else { egui::Color32::from_rgb(242, 242, 242) }
                         );
                         
                         if response.clicked() {
@@ -394,13 +402,17 @@ impl eframe::App for GuiApp {
                             if _is_selected {
                                 ui.painter().rect_filled(rect, egui::CornerRadius::ZERO, selected_bg_color);
                             }
+                            // 绘制悬停状态背景
+                            else if response.hovered() {
+                                ui.painter().rect_filled(rect, egui::CornerRadius::ZERO, hover_bg_color);
+                            }
                             
                             ui.painter().text(
                                 rect.center(),
                                 egui::Align2::CENTER_CENTER,
                                 "💾备份驱动",
-                                ui.ctx().style().text_styles.get(&text_style).unwrap().clone(),
-                                if _is_selected { selected_fg_color } else { egui::Color32::from_rgb(242, 242, 242) }
+                                font_id.clone(),
+                                if _is_selected || response.hovered() { selected_fg_color } else { egui::Color32::from_rgb(242, 242, 242) }
                             );
                             
                             if response.clicked() {
@@ -417,13 +429,17 @@ impl eframe::App for GuiApp {
                             if _is_selected {
                                 ui.painter().rect_filled(rect, egui::CornerRadius::ZERO, selected_bg_color);
                             }
+                            // 绘制悬停状态背景
+                            else if response.hovered() {
+                                ui.painter().rect_filled(rect, egui::CornerRadius::ZERO, hover_bg_color);
+                            }
                             
                             ui.painter().text(
                                 rect.center(),
                                 egui::Align2::CENTER_CENTER,
                                 "🔄恢复驱动",
-                                ui.ctx().style().text_styles.get(&text_style).unwrap().clone(),
-                                if _is_selected { selected_fg_color } else { egui::Color32::from_rgb(242, 242, 242) }
+                                font_id.clone(),
+                                if _is_selected || response.hovered() { selected_fg_color } else { egui::Color32::from_rgb(242, 242, 242) }
                             );
                             
                             if response.clicked() {
@@ -440,13 +456,17 @@ impl eframe::App for GuiApp {
                             if _is_selected {
                                 ui.painter().rect_filled(rect, egui::CornerRadius::ZERO, selected_bg_color);
                             }
+                            // 绘制悬停状态背景
+                            else if response.hovered() {
+                                ui.painter().rect_filled(rect, egui::CornerRadius::ZERO, hover_bg_color);
+                            }
                             
                             ui.painter().text(
                                 rect.center(),
                                 egui::Align2::CENTER_CENTER,
                                 "🗑️卸载驱动",
-                                ui.ctx().style().text_styles.get(&text_style).unwrap().clone(),
-                                if _is_selected { selected_fg_color } else { egui::Color32::from_rgb(242, 242, 242) }
+                                font_id.clone(),
+                                if _is_selected || response.hovered() { selected_fg_color } else { egui::Color32::from_rgb(242, 242, 242) }
                             );
                             
                             if response.clicked() {
@@ -464,13 +484,17 @@ impl eframe::App for GuiApp {
                         if _is_selected {
                             ui.painter().rect_filled(rect, egui::CornerRadius::ZERO, selected_bg_color);
                         }
+                        // 绘制悬停状态背景
+                        else if response.hovered() {
+                            ui.painter().rect_filled(rect, egui::CornerRadius::ZERO, hover_bg_color);
+                        }
                         
                         ui.painter().text(
                             rect.center(),
                             egui::Align2::CENTER_CENTER,
                             "系统、游戏运行组件",
-                            ui.ctx().style().text_styles.get(&text_style).unwrap().clone(),
-                            if _is_selected { selected_fg_color } else { egui::Color32::from_rgb(242, 242, 242) }
+                            font_id.clone(),
+                            if _is_selected || response.hovered() { selected_fg_color } else { egui::Color32::from_rgb(242, 242, 242) }
                         );
                         if response.clicked() {
                             self.selected_tab = AppTab::SystemGameComponents;
@@ -488,13 +512,17 @@ impl eframe::App for GuiApp {
                         if _is_selected {
                             ui.painter().rect_filled(rect, egui::CornerRadius::ZERO, selected_bg_color);
                         }
+                        // 绘制悬停状态背景
+                        else if response.hovered() {
+                            ui.painter().rect_filled(rect, egui::CornerRadius::ZERO, hover_bg_color);
+                        }
                         
                         ui.painter().text(
                             rect.center(),
                             egui::Align2::CENTER_CENTER,
                             "设置",
-                            ui.ctx().style().text_styles.get(&text_style).unwrap().clone(),
-                            if _is_selected { selected_fg_color } else { egui::Color32::from_rgb(242, 242, 242) }
+                            font_id.clone(),
+                            if _is_selected || response.hovered() { selected_fg_color } else { egui::Color32::from_rgb(242, 242, 242) }
                         );
                         if response.clicked() {
                             self.selected_tab = AppTab::Settings;
@@ -578,7 +606,7 @@ impl eframe::App for GuiApp {
                                     texture.id(),
                                     egui::Rect::from_min_size(image_pos, image_size),
                                     egui::Rect::from_min_max(egui::Pos2::ZERO, egui::Pos2::new(1.0, 1.0)),
-                                    egui::Color32::WHITE
+                                    egui::Color32::BLACK
                                 );
                             }
                             
