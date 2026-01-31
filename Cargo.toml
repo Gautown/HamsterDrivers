@@ -1,0 +1,47 @@
+# Cargo.toml
+[package]
+name = "hamster-driver-manager"
+version = "0.0.1"
+edition = "2021"
+
+# 设置Windows子系统为GUI，隐藏控制台窗口
+[[bin]]
+name = "hamster-driver-manager"
+path = "src/main.rs"
+
+# 对于Windows平台，设置子系统为windows（隐藏控制台）
+[target.'cfg(windows)'.bin]
+hamster-driver-manager = { subsystem = "windows" }
+
+[dependencies]
+eframe = "0.33.3"
+egui = "0.33.3"
+# Windows API相关
+windows = { version = "0.52", features = [
+    "Win32_Foundation",
+    "Win32_UI_WindowsAndMessaging",
+    "Win32_Graphics_Dwm",
+    "Win32_UI_Controls",
+    "Win32_System_SystemInformation",
+    "Win32_System_Threading",
+] }
+winapi = { version = "0.3", features = ["dwmapi", "winuser", "libloaderapi", "minwindef", "windef"] }
+raw-window-handle = "0.6"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+chrono = { version = "0.4", features = ["serde"] }
+indicatif = "0.18"
+zip = "2.2"
+env_logger = "0.11"
+image = "0.25"
+sysinfo = "0.37.2"
+wmi = "0.12.0"
+
+[build-dependencies]
+winres = "0.1"
+
+[profile.dev]
+opt-level = 0
+debug = 1
+codegen-units = 16
+lto = false
