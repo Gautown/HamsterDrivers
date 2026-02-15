@@ -120,7 +120,7 @@ impl DriverManagement {
         let timestamp = chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
         
         // 读取备份文件
-        let backup_content = match std::fs::read_to_string(backup_file) {
+        let _backup_content = match std::fs::read_to_string(backup_file) {
             Ok(content) => content,
             Err(e) => {
                 let result = RestoreResult {

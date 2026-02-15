@@ -366,12 +366,12 @@ pub fn get_direct_monitor_info() -> Result<Vec<String>, String> {
                     "未知尺寸".to_string()
                 };
                 
-                // 格式化为：制造商-型号-屏幕尺寸-分辨率@刷新率
+                // 格式化为：显示器n：制造商-型号-屏幕尺寸-分辨率@刷新率
                 let parts: Vec<&str> = monitor_line.split('-').collect();
                 let formatted_info = if parts.len() >= 2 {
-                    format!("{}-{}-{}", monitor_line, screen_size, resolution)
+                    format!("显示器{}：{}-{}-{}", i + 1, monitor_line, screen_size, resolution)
                 } else {
-                    format!("{}-未知型号-{}-{}", monitor_line, screen_size, resolution)
+                    format!("显示器{}：{}-未知型号-{}-{}", i + 1, monitor_line, screen_size, resolution)
                 };
                 monitor_info.push(formatted_info);
             }
@@ -397,11 +397,11 @@ pub fn get_direct_monitor_info() -> Result<Vec<String>, String> {
                         let stdout = String::from_utf8_lossy(&sys_output.stdout);
                         let lines: Vec<&str> = stdout.lines().collect();
                         
-                        for (i, line) in lines.iter().enumerate() {
+                        for (j, line) in lines.iter().enumerate() {
                     let trimmed = line.trim();
                     if !trimmed.is_empty() {
-                        // 格式化为：未知制造商-未知型号-未知尺寸-分辨率@刷新率
-                        monitor_info.push(format!("未知制造商-未知型号-未知尺寸-{}", trimmed));
+                        // 格式化为：显示器n：未知制造商-未知型号-未知尺寸-分辨率@刷新率
+                        monitor_info.push(format!("显示器{}：未知制造商-未知型号-未知尺寸-{}", j + 1, trimmed));
                     }
                 }
                     }
@@ -481,8 +481,8 @@ pub fn get_complete_monitor_info(wmi_con: &WMIConnection) -> Result<Vec<String>,
             "?x?@?Hz"
         };
         
-        // 格式化为：制造商-型号-屏幕尺寸-分辨率@刷新率
-        monitor_info.push(format!("{}-{}", edid_str, res_info));
+        // 格式化为：显示器n：制造商-型号-屏幕尺寸-分辨率@刷新率
+        monitor_info.push(format!("显示器{}：{}-{}", i + 1, edid_str, res_info));
     }
     
     // 如果没有获取到EDID信息，但获取到了分辨率信息

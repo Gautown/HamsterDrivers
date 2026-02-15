@@ -57,8 +57,6 @@ enum AppTab {
 #[derive(PartialEq)]
 enum DriverManagementSubTab {
     Backup,
-    Restore,
-    Uninstall,
 }
 
 impl GuiApp {
@@ -102,15 +100,15 @@ impl GuiApp {
         })
     }
 
-    pub fn scan_drivers(&mut self) {
-        // 对于UI流畅性，最重要的是避免在UI线程上执行长时间运行的操作
-        // 我们可以将扫描操作放到后台线程，但需要正确的线程安全实现
-        // 现在我们暂时注释掉耗时操作，重点优化UI响应
-        self.scan_in_progress = true;
-        
-        // 使用一个标记来表示后台正在进行扫描
-        // 实际的扫描操作应该在另一个函数中使用适当的异步方法实现
-    }
+    // pub fn scan_drivers(&mut self) {
+    //     // 对于UI流畅性，最重要的是避免在UI线程上执行长时间运行的操作
+    //     // 我们可以将扫描操作放到后台线程，但需要正确的线程安全实现
+    //     // 现在我们暂时注释掉耗时操作，重点优化UI响应
+    //     self.scan_in_progress = true;
+    //     
+    //     // 使用一个标记来表示后台正在进行扫描
+    //     // 实际的扫描操作应该在另一个函数中使用适当的异步方法实现
+    // }
 
     /// 加载SVG图标并转换为纹理
     fn load_svg_icon(&self, svg_path: &str, target_size: (u32, u32), ctx: &egui::Context) -> Option<egui::TextureHandle> {
@@ -975,42 +973,42 @@ fn show_backup_view(ctx: &egui::Context, _state: &mut GuiApp) {
     });
 }
 
-fn show_dependency_view(ctx: &egui::Context, state: &mut GuiApp) {
-    egui::CentralPanel::default().show(ctx, |ui| {
-        ui.heading("驱动依赖关系分析");
+// fn show_dependency_view(ctx: &egui::Context, state: &mut GuiApp) {
+//     egui::CentralPanel::default().show(ctx, |ui| {
+//         ui.heading("驱动依赖关系分析");
 
-        if ui.button("分析依赖关系").clicked() {
-            let _ = state.dependency_analyzer.analyze_dependencies(&state.drivers);
-        }
+//         if ui.button("分析依赖关系").clicked() {
+//             let _ = state.dependency_analyzer.analyze_dependencies(&state.drivers);
+//         }
 
-        // 显示循环依赖
-        let circular = state.dependency_analyzer.find_circular_dependencies();
-        if !circular.is_empty() {
-            ui.colored_label(egui::Color32::RED, "⚠️ 发现循环依赖:");
-            for cycle in circular {
-                let cycle_str: String = cycle.iter().map(|s| s.as_str()).collect::<Vec<_>>().join(" → ");
-                ui.label(format!("➜ {}", cycle_str));
-            }
-        }
+//         // 显示循环依赖
+//         let circular = state.dependency_analyzer.find_circular_dependencies();
+//         if !circular.is_empty() {
+//             ui.colored_label(egui::Color32::RED, "⚠️ 发现循环依赖:");
+//             for cycle in circular {
+//                 let cycle_str: String = cycle.iter().map(|s| s.as_str()).collect::<Vec<_>>().join(" → ");
+//                 ui.label(format!("➜ {}", cycle_str));
+//             }
+//         }
 
-        // 依赖关系图
-        if let Some(selected_idx) = state.selected_driver {
-            if let Some(driver) = state.drivers.get(selected_idx) {
-                let chain = state.dependency_analyzer.get_dependency_chain(&driver.name);
-                ui.collapsing("依赖链", |ui| {
-                    for (i, driver_name) in chain.iter().enumerate() {
-                        ui.horizontal(|ui| {
-                            ui.label(format!("{}. {}", i + 1, driver_name));
-                            if ui.small_button("查看").clicked() {
-                                // 选择该驱动
-                            }
-                        });
-                    }
-                });
-            }
-        }
-    });
-}
+//         // 依赖关系图
+//         if let Some(selected_idx) = state.selected_driver {
+//             if let Some(driver) = state.drivers.get(selected_idx) {
+//                 let chain = state.dependency_analyzer.get_dependency_chain(&driver.name);
+//                 ui.collapsing("依赖链", |ui| {
+//                     for (i, driver_name) in chain.iter().enumerate() {
+//                         ui.horizontal(|ui| {
+//                             ui.label(format!("{}. {}", i + 1, driver_name));
+//                             if ui.small_button("查看").clicked() {
+//                                 // 选择该驱动
+//                             }
+//                         });
+//                     }
+//                 });
+//             }
+//         }
+//     });
+// }
 
 
 

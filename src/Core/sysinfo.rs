@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use wmi::{WMIConnection, COMLibrary};
+use hardware_query::HardwareInfo;
 use super::edid;
 
 #[derive(Debug)]
@@ -115,8 +116,8 @@ impl SystemInfo {
 
     fn get_memory_info(wmi_con: &WMIConnection) -> Result<Vec<String>, String> {
         let results: Vec<HashMap<String, wmi::Variant>> = wmi_con
-            .raw_query("SELECT Capacity FROM Win32_PhysicalMemory")
-            .map_err(|e| format!("WMI query failed: {}", e))?;
+            .raw_query("SELECT Manufacturer, Capacity, MemoryType, Speed, SMBIOSMemoryType FROM Win32_PhysicalMemory")
+            .map_err(|e| format!("WMI query失败: {}", e))?;
 
         let mut memory_info = Vec::new();
         let mut total_memory = 0u64;
@@ -134,14 +135,77 @@ impl SystemInfo {
             let total_gb = (total_memory as f64 / (1024.0 * 1024.0 * 1024.0)).round() as u32;
             memory_info.push(format!("总内存: {} GB", total_gb));
             
-            // 显示每个内存条的信息
+            // 显示每个内存条的详细信息
             for (i, memory) in results.iter().enumerate() {
-                if let Some(capacity) = memory.get("Capacity") {
-                    if let wmi::Variant::UI8(bytes) = capacity {
-                        let gb = (*bytes as f64 / (1024.0 * 1024.0 * 1024.0)).round() as u32;
-                        memory_info.push(format!("  内存条{}: {} GB", i + 1, gb));
+                let mut mem_info = String::new();
+                
+                // 制造商
+                let manufacturer = memory.get("Manufacturer")
+                    .and_then(|v| if let wmi::Variant::String(s) = v { Some(s.as_str()) } else { None })
+                    .unwrap_or("未知制造商")
+                    .trim();
+                
+                // 容量
+                let capacity_gb = memory.get("Capacity")
+                    .and_then(|v| if let wmi::Variant::UI8(bytes) = v { 
+                        Some((*bytes as f64 / (1024.0 * 1024.0 * 1024.0)).round() as u32) 
+                    } else { None })
+                    .unwrap_or(0);
+                
+                // 内存代数 - 使用更全面的检测方法
+                let generation = {
+                    // 首先尝试 SMBIOSMemoryType（更准确）
+                    let smbios_type_result: Option<&str> = memory.get("SMBIOSMemoryType")
+                        .and_then(|v| {
+                            if let wmi::Variant::UI4(mem_type) = v {
+                                match mem_type {
+                                    20 => Some("DDR"),
+                                    21 => Some("DDR2"),
+                                    22 => Some("DDR2 FB-DIMM"),
+                                    24 => Some("DDR3"),
+                                    26 => Some("DDR4"),
+                                    29 => Some("DDR5"),
+                                    _ => None
+                                }
+                            } else {
+                                None
+                            }
+                        });
+                    
+                    // 如果 SMBIOS 类型可用，使用它
+                    if let Some(gen) = smbios_type_result {
+                        gen
+                    } else {
+                        // 否则回退到 MemoryType
+                        memory.get("MemoryType")
+                            .and_then(|v| {
+                                if let wmi::Variant::UI4(mem_type) = v {
+                                    match mem_type {
+                                        20 => Some("DDR"),
+                                        21 => Some("DDR2"),
+                                        24 => Some("DDR3"),
+                                        26 => Some("DDR4"),
+                                        34 => Some("DDR5"),
+                                        _ => Some("未知")
+                                    }
+                                } else {
+                                    None
+                                }
+                            })
+                            .unwrap_or("未知")
                     }
-                }
+                };
+                
+                // 频率
+                let speed = memory.get("Speed")
+                    .and_then(|v| if let wmi::Variant::UI4(mhz) = v { Some(*mhz) } else { None })
+                    .unwrap_or(0);
+                
+                // 格式化显示：内存n：制造商-容量-代数@频率
+                mem_info.push_str(&format!("内存{}：{}-{}GB-{}@{}MHz", 
+                    i + 1, manufacturer, capacity_gb, generation, speed));
+                
+                memory_info.push(mem_info);
             }
         }
 
@@ -154,80 +218,345 @@ impl SystemInfo {
 
     fn get_disk_info(wmi_con: &WMIConnection) -> Result<Vec<String>, String> {
         let results: Vec<HashMap<String, wmi::Variant>> = wmi_con
-            .raw_query("SELECT Size, Model FROM Win32_DiskDrive")
-            .map_err(|e| format!("WMI query failed: {}", e))?;
+            .raw_query("SELECT Manufacturer, Model, Size, MediaType FROM Win32_DiskDrive")
+            .map_err(|e| format!("WMI query失败: {}", e))?;
 
         let mut disk_info = Vec::new();
-        for disk in results {
+        for (i, disk) in results.iter().enumerate() {
             let mut info = String::new();
             
-            if let Some(model) = disk.get("Model") {
-                if let wmi::Variant::String(s) = model {
-                    info.push_str(s);
-                }
-            }
+            // 制造商（去掉"(标准磁盘驱动器)"描述）
+            let manufacturer = disk.get("Manufacturer")
+                .and_then(|v| if let wmi::Variant::String(s) = v { Some(s.as_str()) } else { None })
+                .map(|s| s.replace("(标准磁盘驱动器)", "").trim().to_string())
+                .unwrap_or("未知制造商".to_string());
             
-            if let Some(size) = disk.get("Size") {
-                if let wmi::Variant::UI8(bytes) = size {
-                    let gb = (*bytes as f64 / (1024.0 * 1024.0 * 1024.0)).round() as u32;
-                    if !info.is_empty() {
-                        info.push_str(" - ");
+            // 型号
+            let model = disk.get("Model")
+                .and_then(|v| if let wmi::Variant::String(s) = v { Some(s.as_str()) } else { None })
+                .unwrap_or("未知型号")
+                .trim();
+            
+            // 容量
+            let capacity_gb = disk.get("Size")
+                .and_then(|v| if let wmi::Variant::UI8(bytes) = v { 
+                    Some((*bytes as f64 / (1024.0 * 1024.0 * 1024.0)).round() as u32) 
+                } else { None })
+                .unwrap_or(0);
+            
+            // 硬盘类型判断（固态/机械/U盘）
+            let disk_type = {
+                // 首先检查MediaType
+                let media_type = disk.get("MediaType")
+                    .and_then(|v| if let wmi::Variant::String(s) = v { Some(s.to_lowercase()) } else { None });
+                
+                // 检查型号名称中的关键词
+                let model_lower = model.to_lowercase();
+                
+                // 固态硬盘判断逻辑（优先级最高）
+                if media_type.as_deref() == Some("ssd") || 
+                   media_type.as_deref() == Some("solid state drive") ||
+                   media_type.as_deref() == Some("nvme") ||
+                   model_lower.contains("ssd") ||
+                   model_lower.contains("nvme") ||
+                   model_lower.contains("solid state") ||
+                   model_lower.contains("flash") ||
+                   model_lower.contains("m.2") ||
+                   model_lower.contains("m2") ||
+                   model_lower.contains("pcie") ||
+                   model_lower.contains("sata ssd") ||
+                   model_lower.contains("sata-ssd") ||
+                   // 常见SSD制造商品牌
+                   model_lower.contains("samsung") && (model_lower.contains("evo") || model_lower.contains("pro") || model_lower.contains("qvo")) ||
+                   model_lower.contains("crucial") ||
+                   model_lower.contains("kingston") && model_lower.contains("ssd") ||
+                   model_lower.contains("wd") && model_lower.contains("blue") ||
+                   model_lower.contains("seagate") && model_lower.contains("firecuda") ||
+                   model_lower.contains("intel") && model_lower.contains("ssd") {
+                    "固态"
+                } 
+                // U盘判断逻辑
+                else if media_type.as_deref() == Some("external hard disk media") ||
+                          media_type.as_deref() == Some("removable media") ||
+                          model_lower.contains("usb") ||
+                          model_lower.contains("removable") ||
+                          model_lower.contains("external") ||
+                          model_lower.contains("flash drive") ||
+                          model_lower.contains("pen drive") {
+                    "U盘"
+                } 
+                // 机械硬盘判断逻辑
+                else if media_type.as_deref() == Some("hdd") ||
+                          media_type.as_deref() == Some("hard disk drive") ||
+                          media_type.as_deref() == Some("fixed hard disk media") ||
+                          model_lower.contains("hdd") ||
+                          model_lower.contains("hard disk") ||
+                          model_lower.contains("wd") && model_lower.contains("green") ||
+                          model_lower.contains("wd") && model_lower.contains("black") ||
+                          model_lower.contains("wd") && model_lower.contains("red") ||
+                          model_lower.contains("wd") && model_lower.contains("purple") ||
+                          model_lower.contains("seagate") && model_lower.contains("barracuda") ||
+                          model_lower.contains("toshiba") && model_lower.contains("dt") {
+                    "机械"
+                } else {
+                    // 默认根据接口类型判断
+                    if model_lower.contains("usb") {
+                        "U盘"
+                    } else {
+                        // 根据容量和型号特征智能判断
+                        if capacity_gb <= 512 && (model_lower.contains("flash") || model_lower.contains("sd")) {
+                            "U盘"
+                        } else if capacity_gb >= 1000 && (model_lower.contains("wd") || model_lower.contains("seagate") || model_lower.contains("toshiba")) {
+                            "机械"
+                        } else {
+                            "机械" // 默认认为是机械硬盘
+                        }
                     }
-                    info.push_str(&format!("{} GB", gb));
                 }
-            }
+            };
             
-            if info.is_empty() {
-                info = "Unknown Disk".to_string();
-            }
+            // 格式化显示：硬盘n：制造商-型号-容量-类型
+            info.push_str(&format!("硬盘{}：{}-{}-{}GB-{}", 
+                i + 1, manufacturer, model, capacity_gb, disk_type));
             
             disk_info.push(info);
         }
 
         if disk_info.is_empty() {
-            disk_info.push("Unknown".to_string());
+            disk_info.push("未知硬盘".to_string());
         }
 
         Ok(disk_info)
     }
 
-    fn get_gpu_info(wmi_con: &WMIConnection) -> Result<Vec<String>, String> {
-        let results: Vec<HashMap<String, wmi::Variant>> = wmi_con
-            .raw_query("SELECT Name FROM Win32_VideoController WHERE Name != 'Microsoft Basic Display Adapter'")
-            .map_err(|e| format!("WMI query failed: {}", e))?;
-
+    fn get_gpu_info(_wmi_con: &WMIConnection) -> Result<Vec<String>, String> {
         let mut gpu_info = Vec::new();
-        for gpu in results {
-            if let Some(name) = gpu.get("Name") {
-                if let wmi::Variant::String(s) = name {
-                    gpu_info.push(s.clone());
+        
+        // 使用hardware-query库获取显卡信息
+        match HardwareInfo::query() {
+            Ok(hw_info) => {
+                // 获取所有GPU信息
+                let gpus = hw_info.gpus();
+                
+                for (i, gpu) in gpus.iter().enumerate() {
+                    let mut gpu_info_str = String::new();
+                    
+                    // 获取显卡制造商和型号
+                    let vendor = gpu.vendor();
+                    let model_name = gpu.model_name();
+                    
+                    // 获取显存信息（GB），智能选择最准确的信息源
+                    let vram_gb = {
+                        let model_based_vram = Self::get_vram_by_model(&format!("{} {}", vendor, model_name)) as f64;
+                        let library_vram = gpu.memory_gb();
+                        
+                        // 智能判断：如果型号匹配的显存与库返回的显存差异很大，且型号匹配的显存更合理，则使用型号匹配
+                        let model_name_lower = model_name.to_lowercase();
+                        
+                        // 对于专业显卡（如RTX A4000），如果库返回的显存明显小于型号匹配的显存，则使用型号匹配
+                        if (model_name_lower.contains("rtx a4000") && library_vram < 10.0) ||
+                           (model_name_lower.contains("rtx") && library_vram < model_based_vram * 0.5) ||
+                           (library_vram < 2.0 || library_vram > 100.0) {
+                            model_based_vram
+                        } else {
+                            // 否则使用库提供的信息
+                            library_vram
+                        }
+                    };
+                    
+                    // 格式化显示：显卡n：制造商+型号+显存
+                    gpu_info_str.push_str(&format!("显卡{}：{}+{}+{}GB", i + 1, vendor, model_name, vram_gb));
+                    
+                    gpu_info.push(gpu_info_str);
+                }
+            }
+            Err(e) => {
+                // 如果hardware-query失败，回退到WMI查询
+                let results: Vec<HashMap<String, wmi::Variant>> = _wmi_con
+                    .raw_query("SELECT Name FROM Win32_VideoController WHERE Name != 'Microsoft Basic Display Adapter'")
+                    .map_err(|e| format!("WMI query failed: {}", e))?;
+                
+                for (i, gpu) in results.iter().enumerate() {
+                    let mut gpu_info_str = String::new();
+                    
+                    let name = gpu.get("Name")
+                        .and_then(|v| if let wmi::Variant::String(s) = v { Some(s.as_str()) } else { None })
+                        .unwrap_or("未知型号");
+                    
+                    let (manufacturer, model) = {
+                        let name_lower = name.to_lowercase();
+                        if name_lower.contains("nvidia") {
+                            ("NVIDIA", name.trim())
+                        } else if name_lower.contains("amd") || name_lower.contains("radeon") {
+                            ("AMD", name.trim())
+                        } else if name_lower.contains("intel") {
+                            ("Intel", name.trim())
+                        } else {
+                            ("未知制造商", name.trim())
+                        }
+                    };
+                    
+                    let vram_gb = Self::get_vram_by_model(name);
+                    
+                    gpu_info_str.push_str(&format!("显卡{}：{}+{}+{}GB", i + 1, manufacturer, model, vram_gb));
+                    gpu_info.push(gpu_info_str);
                 }
             }
         }
 
         if gpu_info.is_empty() {
-            gpu_info.push("Unknown GPU".to_string());
+            gpu_info.push("未知显卡".to_string());
         }
 
         Ok(gpu_info)
     }
+    
+    // 辅助函数：根据显卡型号获取显存
+    fn get_vram_by_model(name: &str) -> u32 {
+        let name_lower = name.to_lowercase();
+        
+        // NVIDIA显卡
+        if name_lower.contains("rtx a4000") {
+            16 // RTX A4000 专业卡有16GB显存
+        } else if name_lower.contains("rtx 4090") {
+            24 // RTX 4090 24GB
+        } else if name_lower.contains("rtx 4080") {
+            16 // RTX 4080 16GB
+        } else if name_lower.contains("rtx 4070") || name_lower.contains("rtx 4070 ti") {
+            12 // RTX 4070/Ti 12GB
+        } else if name_lower.contains("rtx 4060") || name_lower.contains("rtx 4060 ti") {
+            8 // RTX 4060/Ti 8GB
+        } else if name_lower.contains("rtx 4050") {
+            6 // RTX 4050 6GB
+        } else if name_lower.contains("rtx 3090") {
+            24 // RTX 3090 24GB
+        } else if name_lower.contains("rtx 3080") {
+            10 // RTX 3080 10GB（部分12GB）
+        } else if name_lower.contains("rtx 3070") || name_lower.contains("rtx 3070 ti") {
+            8 // RTX 3070/Ti 8GB
+        } else if name_lower.contains("rtx 3060") || name_lower.contains("rtx 3060 ti") {
+            12 // RTX 3060 12GB / RTX 3060 Ti 8GB
+        } else if name_lower.contains("rtx 3050") {
+            8 // RTX 3050 8GB
+        } else if name_lower.contains("gtx 1660") {
+            6 // GTX 1660 6GB
+        } else if name_lower.contains("gtx 1650") {
+            4 // GTX 1650 4GB
+        } 
+        // AMD显卡
+        else if name_lower.contains("radeon rx 7900 xtx") {
+            24 // RX 7900 XTX 24GB
+        } else if name_lower.contains("radeon rx 7900 xt") {
+            20 // RX 7900 XT 20GB
+        } else if name_lower.contains("radeon rx 7800 xt") {
+            16 // RX 7800 XT 16GB
+        } else if name_lower.contains("radeon rx 7700 xt") {
+            12 // RX 7700 XT 12GB
+        } else if name_lower.contains("radeon rx 7600") {
+            8 // RX 7600 8GB
+        } else if name_lower.contains("radeon rx 6950 xt") {
+            16 // RX 6950 XT 16GB
+        } else if name_lower.contains("radeon rx 6900 xt") {
+            16 // RX 6900 XT 16GB
+        } else if name_lower.contains("radeon rx 6800 xt") {
+            16 // RX 6800 XT 16GB
+        } else if name_lower.contains("radeon rx 6800") {
+            16 // RX 6800 16GB
+        } else if name_lower.contains("radeon rx 6700 xt") {
+            12 // RX 6700 XT 12GB
+        } else if name_lower.contains("radeon rx 6600 xt") {
+            8 // RX 6600 XT 8GB
+        } else if name_lower.contains("radeon rx 6600") {
+            8 // RX 6600 8GB
+        }
+        // 集成显卡
+        else if name_lower.contains("intel") || name_lower.contains("radeon graphics") || name_lower.contains("uhd graphics") {
+            2 // 集成显卡通常共享内存，显示为2GB
+        }
+        // 默认值
+        else {
+            // 根据显卡名称中的关键词估算
+            if name_lower.contains("rtx") || name_lower.contains("gtx") {
+                if name_lower.contains("80") || name_lower.contains("90") {
+                    16 // 80/90系列高端卡
+                } else if name_lower.contains("70") {
+                    8 // 70系列中高端卡
+                } else if name_lower.contains("60") {
+                    6 // 60系列中端卡
+                } else if name_lower.contains("50") {
+                    4 // 50系列入门卡
+                } else {
+                    6 // 默认NVIDIA游戏卡
+                }
+            } else if name_lower.contains("radeon") {
+                if name_lower.contains("7900") || name_lower.contains("6900") || name_lower.contains("6800") {
+                    16 // 高端AMD卡
+                } else if name_lower.contains("7800") || name_lower.contains("7700") || name_lower.contains("6700") {
+                    12 // 中高端AMD卡
+                } else if name_lower.contains("7600") || name_lower.contains("6600") {
+                    8 // 中端AMD卡
+                } else {
+                    4 // 默认AMD卡
+                }
+            } else {
+                4 // 其他未知显卡默认值
+            }
+        }
+    }
 
     fn get_network_adapters(wmi_con: &WMIConnection) -> Result<Vec<String>, String> {
         let results: Vec<HashMap<String, wmi::Variant>> = wmi_con
-            .raw_query("SELECT Name FROM Win32_NetworkAdapter WHERE PhysicalAdapter = TRUE")
+            .raw_query("SELECT Name, Manufacturer, Speed FROM Win32_NetworkAdapter WHERE PhysicalAdapter = TRUE")
             .map_err(|e| format!("WMI query failed: {}", e))?;
 
         let mut network_adapters = Vec::new();
         for adapter in results {
-            if let Some(name) = adapter.get("Name") {
-                if let wmi::Variant::String(s) = name {
-                    network_adapters.push(s.clone());
+            let mut adapter_info = String::new();
+            
+            // 获取适配器名称
+            let name = adapter.get("Name")
+                .and_then(|v| if let wmi::Variant::String(s) = v { Some(s.as_str()) } else { None })
+                .unwrap_or("未知型号");
+            
+            // 获取制造商
+            let manufacturer = adapter.get("Manufacturer")
+                .and_then(|v| if let wmi::Variant::String(s) = v { Some(s.as_str()) } else { None })
+                .unwrap_or("未知制造商");
+            
+            // 获取速度（转换为Mbps，处理异常值）
+            let speed_mbps = adapter.get("Speed")
+                .and_then(|v| if let wmi::Variant::UI8(speed) = v { 
+                    let mbps = (*speed as f64 / 1_000_000.0).round() as u32;
+                    // 过滤异常值（如4294967295Mbps）
+                    if mbps > 100000 || mbps == 0 { // 大于100Gbps或为0视为异常
+                        None
+                    } else {
+                        Some(mbps)
+                    }
+                } else { None })
+                .unwrap_or(0);
+            
+            // 判断适配器类型
+            let adapter_type = {
+                let name_lower = name.to_lowercase();
+                if name_lower.contains("bluetooth") || name_lower.contains("蓝牙") {
+                    "蓝牙"
+                } else if name_lower.contains("wifi") || name_lower.contains("wireless") || 
+                          name_lower.contains("wi-fi") || name_lower.contains("802.11") {
+                    "WiFi"
+                } else {
+                    "网卡"
                 }
-            }
+            };
+            
+            // 格式化显示：蓝牙or网卡orWiFi：制造商-型号-速度
+            adapter_info.push_str(&format!("{}：{}-{}-{}Mbps", adapter_type, manufacturer, name, speed_mbps));
+            
+            network_adapters.push(adapter_info);
         }
 
         if network_adapters.is_empty() {
-            network_adapters.push("Unknown Network Adapter".to_string());
+            network_adapters.push("未知网络适配器".to_string());
         }
 
         Ok(network_adapters)
