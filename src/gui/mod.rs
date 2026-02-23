@@ -1,92 +1,47 @@
 // 将原来的ui.rs内容整合进来
 use eframe::egui;
-use iconflow::{try_icon, Pack, Size, Style};
 use crate::core::sysinfo::{SystemInfo, HardwareItem};
-use crate::bootstrap_icons_v1_13_1;
 use std::collections::HashMap;
 
-// 辅助函数：获取图标（优化版）
-fn get_iconflow_icon(name: &str) -> (char, String) {
-    // 首先尝试使用优化版 Bootstrap Icons v1.13.1
-    if let Some((icon_char, font_family)) = crate::bootstrap_icons_v1_13_1_optimized::get_bootstrap_icon_v1_13_1_optimized(name) {
-        return (icon_char, font_family.to_string());
-    }
-    
-    // 如果优化版中没有，则回退到 iconflow
-    match try_icon(Pack::Bootstrap, name, Style::Regular, Size::Regular) {
-        Ok(icon) => {
-            // 使用 iconflow 返回的实际字体族名称
-            (char::from_u32(icon.codepoint).unwrap_or('?'), icon.family.to_string())
-        }
-        Err(_) => ('?', "".to_string()),
-    }
-}
-
-// 辅助函数：根据主板制造商获取对应的logo图标
-fn get_motherboard_logo(motherboard: &str) -> (char, String) {
+// 辅助函数：根据主板制造商获取对应的logo图标路径
+fn get_motherboard_logo_path(motherboard: &str) -> String {
     let motherboard_lower = motherboard.to_lowercase();
     
-    // 主板制造商logo映射 - 使用Bootstrap包中可用的图标
+    // 主板制造商logo映射 - 使用SVG图标
     if motherboard_lower.contains("asus") || motherboard_lower.contains("华硕") {
         // ASUS品牌，使用电脑图标
-        get_iconflow_icon("pc")
+        "assets/icons/computer.svg".to_string()
     } else if motherboard_lower.contains("gigabyte") || motherboard_lower.contains("技嘉") {
         // 技嘉品牌，使用主板图标
-        get_iconflow_icon("motherboard")
+        "assets/icons/motherboard.svg".to_string()
     } else if motherboard_lower.contains("msi") || motherboard_lower.contains("微星") {
         // 微星品牌，使用星星图标
-        get_iconflow_icon("star")
+        "assets/icons/star.svg".to_string()
     } else if motherboard_lower.contains("intel") {
         // Intel品牌，使用芯片图标
-        get_iconflow_icon("cpu")
+        "assets/icons/cpu.svg".to_string()
     } else if motherboard_lower.contains("amd") {
         // AMD品牌，使用处理器图标
-        get_iconflow_icon("cpu")
+        "assets/icons/cpu.svg".to_string()
     } else if motherboard_lower.contains("dell") {
         // Dell品牌，使用电脑图标
-        get_iconflow_icon("pc")
+        "assets/icons/computer.svg".to_string()
     } else if motherboard_lower.contains("hp") || motherboard_lower.contains("惠普") {
         // HP品牌，使用电脑图标
-        get_iconflow_icon("laptop")
+        "assets/icons/computer.svg".to_string()
     } else if motherboard_lower.contains("lenovo") || motherboard_lower.contains("联想") {
         // 联想品牌，使用电脑图标
-        get_iconflow_icon("pc")
+        "assets/icons/computer.svg".to_string()
     } else if motherboard_lower.contains("acer") || motherboard_lower.contains("宏碁") {
         // Acer品牌，使用电脑图标
-        get_iconflow_icon("laptop")
+        "assets/icons/computer.svg".to_string()
     } else {
         // 默认使用主板图标
-        get_iconflow_icon("motherboard")
+        "assets/icons/motherboard.svg".to_string()
     }
 }
 
-// 调试函数：检查iconflow中可用的品牌logo图标
-fn debug_available_brand_icons() {
-    println!("检查iconflow中可用的品牌logo图标:");
-    println!("==================================");
-    
-    let brand_icons = [
-        "brand-asus", "brand-gigabyte", "brand-msi", "brand-intel", "brand-amd",
-        "brand-dell", "brand-hp", "brand-lenovo", "brand-acer",
-        "asus", "gigabyte", "msi", "intel", "amd", "dell", "hp", "lenovo", "acer",
-        "computer", "desktop", "laptop", "motherboard", "circuit-board", "cpu", "factory",
-        "windows-logo", "info", "hash", "gear"
-    ];
-    
-    for icon_name in brand_icons.iter() {
-        match try_icon(Pack::Bootstrap, icon_name, Style::Regular, Size::Regular) {
-            Ok(icon) => {
-                println!("✅ {}: 可用 (字符: {}, 字体族: {})", 
-                    icon_name, 
-                    char::from_u32(icon.codepoint).unwrap_or('?'),
-                    icon.family);
-            }
-            Err(_) => {
-                println!("❌ {}: 不可用", icon_name);
-            }
-        }
-    }
-}
+
 // 新增导入 image crate
 use webbrowser;
 // SVG支持
@@ -216,15 +171,16 @@ impl GuiApp {
     // }
 
     /// 显示带图标的硬件项目
-    fn show_hardware_item(&mut self, ui: &mut egui::Ui, item: &HardwareItem, _ctx: &egui::Context) {
+    fn show_hardware_item(&mut self, ui: &mut egui::Ui, item: &HardwareItem, ctx: &egui::Context) {
         ui.horizontal(|ui| {
             ui.add_space(16.0);
             
-            // 使用iconflow图标显示图标，使用正确的字体设置
-            // 使用iconflow提供的实际字体族名称
-            ui.label(egui::RichText::new(&item.icon_char)
-                .family(egui::FontFamily::Name(item.icon_family.clone().into()))
-                .size(16.0));
+            // 使用SVG图标显示图标 (18x18px)
+            if let Some(icon) = self.get_or_load_icon(&item.icon_path, (18, 18), ctx) {
+                ui.image((icon.id(), egui::Vec2::new(18.0, 18.0)));
+            } else {
+                ui.label("📱");
+            }
             
             ui.add_space(8.0);
             ui.label(&item.text);
@@ -247,14 +203,20 @@ impl GuiApp {
         match std::fs::read(svg_path) {
             Ok(svg_data) => {
                 // 解析SVG
-                let opt = usvg::Options::default();
+                let mut opt = usvg::Options::default();
+                // 设置目标尺寸，确保SVG正确缩放
+                if let Some(size) = usvg::Size::from_wh(target_size.0 as f32, target_size.1 as f32) {
+                    opt.default_size = size;
+                }
+                
                 match usvg::Tree::from_data(&svg_data, &opt) {
                     Ok(tree) => {
                         // 创建Pixmap进行渲染
                         let mut pixmap = Pixmap::new(target_size.0, target_size.1).unwrap();
                         
-                        // 渲染SVG到Pixmap - 先填充透明背景
+                        // 渲染SVG到Pixmap - 使用透明背景
                         pixmap.fill(tiny_skia::Color::TRANSPARENT);
+                        
                         let rtree = resvg::Tree::from_usvg(&tree);
                         rtree.render(Transform::default(), &mut pixmap.as_mut());
                         
@@ -540,7 +502,7 @@ impl eframe::App for GuiApp {
                             ui.painter().text(
                                 rect.center(),
                                 egui::Align2::CENTER_CENTER,
-                                format!("{}备份驱动", get_iconflow_icon("floppy-disk").0),
+                                format!("备份驱动"),
                                 font_id.clone(),
                                 if _is_selected || response.hovered() { selected_fg_color } else { egui::Color32::from_rgb(242, 242, 242) }
                             );
@@ -736,7 +698,7 @@ impl eframe::App for GuiApp {
                                     texture.id(),
                                     egui::Rect::from_min_size(image_pos, image_size),
                                     egui::Rect::from_min_max(egui::Pos2::ZERO, egui::Pos2::new(1.0, 1.0)),
-                                    egui::Color32::BLACK
+                                    egui::Color32::from_rgb(64, 64, 64) // 使用深灰色
                                 );
                             }
                             
@@ -932,16 +894,12 @@ impl eframe::App for GuiApp {
                                     match self.selected_tab {
                                         AppTab::Overview => {
                                             ui.horizontal(|ui| {
-                                                // 添加PC图标
-                                                let (pc_icon, pc_icon_family) = get_iconflow_icon("pc-display");
-                                                let font_family = if pc_icon_family.is_empty() {
-                                                    egui::FontFamily::Proportional
+                                                // 添加PC图标 (24x24px)
+                                                if let Some(icon) = self.get_or_load_icon("assets/icons/pc-display.svg", (24, 24), ctx) {
+                                                    ui.image((icon.id(), egui::Vec2::new(24.0, 24.0)));
                                                 } else {
-                                                    egui::FontFamily::Name(pc_icon_family.into())
-                                                };
-                                                ui.label(egui::RichText::new(pc_icon.to_string())
-                                                    .family(font_family)
-                                                    .size(24.0));
+                                                    ui.label("💻");
+                                                }
                                                 ui.add_space(8.0);
                                                 ui.heading("电脑概览");
                                             });
@@ -965,80 +923,73 @@ impl eframe::App for GuiApp {
                                         let network_adapters: Vec<HardwareItem> = sys_info.network_adapters.clone();
                                         let gpu_info: Vec<HardwareItem> = sys_info.gpu_info.clone();
                                         let monitor_info: Vec<HardwareItem> = sys_info.monitor_info.clone();
+                                        let audio_info: Vec<HardwareItem> = sys_info.audio_info.clone();
+                                        
+                                        // 克隆系统信息以避免借用冲突
+                                        let os_name = sys_info.os_name.clone();
+                                        let os_version = sys_info.os_version.clone();
+                                        let os_version_formatted = sys_info.os_version_formatted.clone();
+                                        let manufacturer = sys_info.manufacturer.clone();
+                                        let motherboard = sys_info.motherboard.clone();
+                                        let cpu = sys_info.cpu.clone();
                                         
                                         // 显示操作系统信息
-                                        if let Some(ref os_name) = sys_info.os_name {
+                                        if let Some(ref os_name) = os_name {
                                             ui.horizontal(|ui| {
-                                                // 添加windows图标
-                                                let (windows_icon, windows_icon_family) = get_iconflow_icon("windows");
-                                                let font_family = if windows_icon_family.is_empty() {
-                                                    egui::FontFamily::Proportional
+                                                // 添加windows图标 (18x18px)
+                                                if let Some(icon) = self.get_or_load_icon("assets/icons/windows.svg", (18, 18), ctx) {
+                                                    ui.image((icon.id(), egui::Vec2::new(18.0, 18.0)));
                                                 } else {
-                                                    egui::FontFamily::Name(windows_icon_family.into())
-                                                };
-                                                ui.label(egui::RichText::new(windows_icon.to_string())
-                                                    .family(font_family)
-                                                    .size(16.0));
+                                                    ui.label("🪟");
+                                                }
                                                 ui.add_space(8.0);
                                                 ui.label(format!("操作系统: {}", os_name));
                                             });
                                         }
                                         
                                         // 显示版本信息：使用更准确的方法获取Windows版本
-                                        if let Some(ref os_name) = sys_info.os_name {
+                                        if let Some(ref os_name) = os_name {
                                             // 根据操作系统名称和版本号判断Windows版本
-                                            let version_display = if let Some(ref os_version) = sys_info.os_version {
+                                            let version_display = if let Some(ref os_version) = os_version {
                                                 SystemInfo::get_windows_version_display(os_name, os_version)
                                             } else {
                                                 "未知版本".to_string()
                                             };
                                             ui.horizontal(|ui| {
-                                                // 添加版本图标
-                                                let (version_icon, version_icon_family) = get_iconflow_icon("r-square");
-                                                let font_family = if version_icon_family.is_empty() {
-                                                    egui::FontFamily::Proportional
+                                                // 添加版本图标 (18x18px)
+                                                if let Some(icon) = self.get_or_load_icon("assets/icons/r-square.svg", (18, 18), ctx) {
+                                                    ui.image((icon.id(), egui::Vec2::new(18.0, 18.0)));
                                                 } else {
-                                                    egui::FontFamily::Name(version_icon_family.into())
-                                                };
-                                                ui.label(egui::RichText::new(version_icon.to_string())
-                                                    .family(font_family)
-                                                    .size(16.0));
+                                                    ui.label("🔢");
+                                                }
                                                 ui.add_space(8.0);
                                                 ui.label(format!("版本: {}", version_display));
                                             });
                                         }
                                         
                                         // 显示操作系统版本号
-                                        if let Some(ref os_version) = sys_info.os_version {
+                                        if let Some(ref os_version) = os_version {
                                             ui.horizontal(|ui| {
-                                                // 添加版本号图标
-                                                let (version_icon, version_icon_family) = get_iconflow_icon("r-square");
-                                                let font_family = if version_icon_family.is_empty() {
-                                                    egui::FontFamily::Proportional
+                                                // 添加版本号图标 (18x18px)
+                                                if let Some(icon) = self.get_or_load_icon("assets/icons/r-square.svg", (18, 18), ctx) {
+                                                    ui.image((icon.id(), egui::Vec2::new(18.0, 18.0)));
                                                 } else {
-                                                    egui::FontFamily::Name(version_icon_family.into())
-                                                };
-                                                ui.label(egui::RichText::new(version_icon.to_string())
-                                                    .family(font_family)
-                                                    .size(16.0));
+                                                    ui.label("🔢");
+                                                }
                                                 ui.add_space(8.0);
                                                 ui.label(format!("版本号: {}", os_version));
                                             });
                                         }
                                         
                                         // 显示内部版本号
-                                        if let Some(ref os_version_formatted) = sys_info.os_version_formatted {
+                                        if let Some(ref os_version_formatted) = os_version_formatted {
                                             ui.horizontal(|ui| {
-                                                // 添加内部版本图标
-                                                let (build_icon, build_icon_family) = get_iconflow_icon("r-square");
-                                                let font_family = if build_icon_family.is_empty() {
-                                                    egui::FontFamily::Proportional
+                                                // 添加内部版本图标 (18x18px)
+                                                if let Some(icon) = self.get_or_load_icon("assets/icons/r-square.svg", (18, 18), ctx) {
+                                                    ui.image((icon.id(), egui::Vec2::new(18.0, 18.0)));
                                                 } else {
-                                                    egui::FontFamily::Name(build_icon_family.into())
-                                                };
-                                                ui.label(egui::RichText::new(build_icon.to_string())
-                                                    .family(font_family)
-                                                    .size(16.0));
+                                                    ui.label("🏗️");
+                                                }
                                                 ui.add_space(8.0);
                                                 ui.label(format!("内部版本: {}", os_version_formatted));
                                             });
@@ -1047,50 +998,39 @@ impl eframe::App for GuiApp {
                                         ui.separator();
                                         
                                         // 显示硬件信息
-                                        if let Some(ref manufacturer) = sys_info.manufacturer {
+                                        if let Some(ref manufacturer) = manufacturer {
                                             ui.horizontal(|ui| {
-                                                // 添加制造商图标
-                                                let (factory_icon, factory_icon_family) = get_iconflow_icon("building");
-                                                let font_family = if factory_icon_family.is_empty() {
-                                                    egui::FontFamily::Proportional
+                                                // 添加制造商图标 (18x18px)
+                                                if let Some(icon) = self.get_or_load_icon("assets/icons/building.svg", (18, 18), ctx) {
+                                                    ui.image((icon.id(), egui::Vec2::new(18.0, 18.0)));
                                                 } else {
-                                                    egui::FontFamily::Name(factory_icon_family.into())
-                                                };
-                                                ui.label(egui::RichText::new(factory_icon.to_string())
-                                                    .family(font_family)
-                                                    .size(16.0));
+                                                    ui.label("🏭");
+                                                }
                                                 ui.add_space(8.0);
                                                 ui.label(format!("制造商: {}", manufacturer));
                                             });
                                         }
-                                        if let Some(ref motherboard) = sys_info.motherboard {
+                                        if let Some(ref motherboard) = motherboard {
                                             ui.horizontal(|ui| {
-                                                // 添加主板制造商logo图标
-                                                let (board_icon, board_icon_family) = get_motherboard_logo("bi-motherboard");
-                                                let font_family = if board_icon_family.is_empty() {
-                                                    egui::FontFamily::Proportional
+                                                // 添加主板制造商logo图标 (18x18px)
+                                                let logo_path = get_motherboard_logo_path(motherboard);
+                                                if let Some(icon) = self.get_or_load_icon(&logo_path, (18, 18), ctx) {
+                                                    ui.image((icon.id(), egui::Vec2::new(18.0, 18.0)));
                                                 } else {
-                                                    egui::FontFamily::Name(board_icon_family.into())
-                                                };
-                                                ui.label(egui::RichText::new(board_icon.to_string())
-                                                    .family(font_family)
-                                                    .size(16.0));
+                                                    ui.label("🔧");
+                                                }
                                                 ui.add_space(8.0);
                                                 ui.label(format!("主板: {}", motherboard));
                                             });
                                         }
-                                        if let Some(ref cpu) = sys_info.cpu {
+                                        if let Some(ref cpu) = cpu {
                                             ui.horizontal(|ui| {
-                                                // 添加CPU图标
-                                                let (cpu_icon, cpu_icon_family) = get_iconflow_icon("bi-cpu");
-                                                let font_family = if cpu_icon_family.is_empty() {
-                                                    egui::FontFamily::Proportional
+                                                // 添加CPU图标 (18x18px)
+                                                if let Some(icon) = self.get_or_load_icon("assets/icons/cpu.svg", (18, 18), ctx) {
+                                                    ui.image((icon.id(), egui::Vec2::new(18.0, 18.0)));
                                                 } else {
-                                                    egui::FontFamily::Name(cpu_icon_family.into())
-                                                };
-                                                ui.label(egui::RichText::new(cpu_icon.to_string())
-                                                    .family(font_family)
-                                                    .size(16.0));
+                                                    ui.label("💻");
+                                                }
                                                 ui.add_space(8.0);
                                                 ui.label(format!("CPU: {}", cpu));
                                             });
@@ -1099,7 +1039,6 @@ impl eframe::App for GuiApp {
                                         ui.separator();
                                         
                                         // 显示内存信息
-                                        ui.label("内存信息:");
                                         for mem in &memory_info {
                                             self.show_hardware_item(ui, mem, ctx);
                                         }
@@ -1107,7 +1046,6 @@ impl eframe::App for GuiApp {
                                         ui.separator();
                                         
                                         // 显示磁盘信息
-                                        ui.label("磁盘信息:");
                                         for disk in &disk_info {
                                             self.show_hardware_item(ui, disk, ctx);
                                         }
@@ -1115,23 +1053,26 @@ impl eframe::App for GuiApp {
                                         ui.separator();
                                         
                                         // 显示其他硬件信息
-                                        ui.label("网络适配器:");
                                         for adapter in &network_adapters {
                                             self.show_hardware_item(ui, adapter, ctx);
                                         }
                                         
                                         ui.separator();
                                         
-                                        ui.label("显卡信息:");
                                         for gpu in &gpu_info {
                                             self.show_hardware_item(ui, gpu, ctx);
                                         }
                                         
                                         ui.separator();
                                         
-                                        ui.label("显示器信息:");
                                         for monitor in &monitor_info {
                                             self.show_hardware_item(ui, monitor, ctx);
+                                        }
+                                        
+                                        ui.separator();
+                                        
+                                        for audio in &audio_info {
+                                            self.show_hardware_item(ui, audio, ctx);
                                         }
                                             } else if self.system_info_loading {
                                                 ui.label("正在加载系统信息...");
@@ -1641,21 +1582,18 @@ fn show_driver_install_view(ui: &mut egui::Ui, state: &mut GuiApp) {
                     // 最新版本
                     ui.label(format!("最新: {}", driver.version));
                     
-                    // 状态指示 - 使用iconflow图标
+                    // 状态指示 - 使用SVG图标
                     if let Some(current_version) = &driver.current_version {
                 if current_version == &driver.version {
                     // 当前版本与最新版本一致 - 使用绿色勾选图标
-                    let (icon_char, icon_family) = get_iconflow_icon("check-circle");
-                    ui.colored_label(egui::Color32::GREEN, egui::RichText::new(icon_char.to_string()).family(egui::FontFamily::Name(icon_family.into())).size(16.0));
+                    ui.colored_label(egui::Color32::GREEN, "✅");
                 } else {
                     // 需要更新 - 使用黄色感叹号图标
-                    let (icon_char, icon_family) = get_iconflow_icon("warning-circle");
-                    ui.colored_label(egui::Color32::YELLOW, egui::RichText::new(icon_char.to_string()).family(egui::FontFamily::Name(icon_family.into())).size(16.0));
+                    ui.colored_label(egui::Color32::YELLOW, "⚠️");
                 }
             } else {
                 // 未安装驱动 - 使用蓝色问号图标
-                let (icon_char, icon_family) = get_iconflow_icon("question");
-                ui.colored_label(egui::Color32::BLUE, egui::RichText::new(icon_char.to_string()).family(egui::FontFamily::Name(icon_family.into())).size(16.0));
+                ui.colored_label(egui::Color32::BLUE, "❓");
             }
                 });
                 

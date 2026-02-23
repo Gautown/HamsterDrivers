@@ -2,22 +2,41 @@ use std::collections::HashMap;
 use wmi::{WMIConnection, COMLibrary};
 use hardware_query::HardwareInfo;
 use super::edid;
-use iconflow::{try_icon, Pack, Size, Style};
 
-// 辅助函数：获取iconflow图标
-fn get_iconflow_icon(name: &str) -> (String, String) {
-    match try_icon(Pack::Bootstrap, name, Style::Regular, Size::Regular) {
-        Ok(icon) => (char::from_u32(icon.codepoint).unwrap_or('?').to_string(), icon.family.to_string()),
-        Err(_) => ("?".to_string(), "".to_string()),
-    }
-}
+// 辅助函数：获取SVG图标路径
+ fn get_svg_icon_path(name: &str) -> String {
+     // 根据图标名称返回对应的SVG文件路径
+     match name {
+         "pc-display" | "computer" | "desktop" => "assets/icons/pc-display.svg",
+         "windows" | "windows-logo" => "assets/icons/windows.svg",
+         "cpu" => "assets/icons/cpu.svg",
+         "device-hdd" | "hdd" | "hard-drive" => "assets/icons/device-hdd.svg",
+         "device-ssd" | "ssd" => "assets/icons/device-ssd.svg",
+         "usb-symbol" | "usb" => "assets/icons/usb-symbol.svg",
+         "gpu-card" | "graphics-card" => "assets/icons/gpu-card.svg",
+         "bluetooth" => "assets/icons/bluetooth.svg",
+         "ethernet" | "network" => "assets/icons/ethernet.svg",
+         "display" => "assets/icons/display.svg",
+         "sound-card" | "audio" => "assets/icons/sound-card.svg",
+         "memory" | "ram" => "assets/icons/memory.svg",
+         "r-square" | "version" | "build" | "info" | "info-circle" => "assets/icons/info.svg",
+         "hash" | "number" => "assets/icons/123.svg",
+         "gear" | "settings" => "assets/icons/gear.svg",
+         "floppy-disk" => "assets/icons/floppy.svg",
+         "check-circle" => "assets/icons/check.svg",
+         "warning-circle" => "assets/icons/warning.svg",
+         "question" => "assets/icons/question.svg",
+         "motherboard" | "circuit-board" => "assets/icons/motherboard.svg",
+         "star" => "assets/icons/star.svg",
+         "building" | "factory" => "assets/icons/building.svg",
+         _ => "assets/icons/default.svg",
+     }.to_string()
+ }
 
 #[derive(Debug, Clone)]
 pub struct HardwareItem {
     pub text: String,
     pub icon_path: String,
-    pub icon_char: String,
-    pub icon_family: String,
 }
 
 #[derive(Debug)]
@@ -156,8 +175,6 @@ impl SystemInfo {
             memory_info.push(HardwareItem {
                 text: format!("总内存: {} GB", total_gb),
                 icon_path: "assets/icons/memory.svg".to_string(),
-                icon_char: get_iconflow_icon("memory").0,
-                icon_family: get_iconflow_icon("memory").1,
             });
             
             // 显示每个内存条的详细信息
@@ -231,8 +248,6 @@ impl SystemInfo {
                 memory_info.push(HardwareItem {
                     text,
                     icon_path: "assets/icons/memory.svg".to_string(),
-                    icon_char: get_iconflow_icon("memory").0,
-                    icon_family: get_iconflow_icon("memory").1,
                 });
             }
         }
@@ -241,8 +256,6 @@ impl SystemInfo {
             memory_info.push(HardwareItem {
                 text: "未知内存".to_string(),
                 icon_path: "assets/icons/memory.svg".to_string(),
-                icon_char: get_iconflow_icon("memory").0,
-                icon_family: get_iconflow_icon("memory").1,
             });
         }
 
@@ -347,10 +360,10 @@ impl SystemInfo {
             };
 
             // 根据硬盘类型选择对应的图标
-            let (icon_path, icon_char, icon_family) = match disk_type {
-                "固态" => ("assets/icons/SSD.svg", get_iconflow_icon("hdd").0, get_iconflow_icon("hdd").1),
-                "U盘" => ("assets/icons/usb.svg", get_iconflow_icon("usb").0, get_iconflow_icon("usb").1),
-                _ => ("assets/icons/hdd.svg", get_iconflow_icon("hdd").0, get_iconflow_icon("hdd").1),
+            let icon_path = match disk_type {
+                "固态" => "assets/icons/device-ssd.svg",
+                "U盘" => "assets/icons/usb-symbol.svg",
+                _ => "assets/icons/device-hdd.svg",
             };
             
             // 格式化显示：硬盘n：制造商-型号-容量-类型
@@ -360,17 +373,13 @@ impl SystemInfo {
             disk_info.push(HardwareItem {
                 text,
                 icon_path: icon_path.to_string(),
-                icon_char: icon_char.to_string(),
-                icon_family: icon_family.to_string(),
             });
         }
 
         if disk_info.is_empty() {
             disk_info.push(HardwareItem {
                 text: "未知硬盘".to_string(),
-                icon_path: "assets/icons/hdd.svg".to_string(),
-                icon_char: get_iconflow_icon("hdd").0,
-                icon_family: get_iconflow_icon("hdd").1,
+                icon_path: "assets/icons/device-hdd.svg".to_string(),
             });
         }
 
@@ -416,8 +425,6 @@ impl SystemInfo {
                     gpu_info.push(HardwareItem {
                         text,
                         icon_path: "assets/icons/gpu-card.svg".to_string(),
-                        icon_char: get_iconflow_icon("gpu-card").0,
-                        icon_family: get_iconflow_icon("gpu-card").1,
                     });
                 }
             }
@@ -451,8 +458,6 @@ impl SystemInfo {
                     gpu_info.push(HardwareItem {
                         text,
                         icon_path: "assets/icons/gpu-card.svg".to_string(),
-                        icon_char: get_iconflow_icon("graphics-card").0,
-                        icon_family: get_iconflow_icon("graphics-card").1,
                     });
                 }
             }
@@ -462,8 +467,6 @@ impl SystemInfo {
             gpu_info.push(HardwareItem {
                 text: "未知显卡".to_string(),
                 icon_path: "assets/icons/gpu-card.svg".to_string(),
-                icon_char: get_iconflow_icon("graphics-card").0,
-                icon_family: get_iconflow_icon("graphics-card").1,
             });
         }
 
@@ -607,10 +610,10 @@ impl SystemInfo {
             };
 
             // 根据适配器类型选择对应的图标
-            let (icon_path, icon_char, icon_family) = match adapter_type {
-                "蓝牙" => ("assets/icons/bluetooth.svg", get_iconflow_icon("bluetooth").0, get_iconflow_icon("bluetooth").1),
-                "WiFi" => ("assets/icons/wifi.svg", get_iconflow_icon("wifi").0, get_iconflow_icon("wifi").1),
-                _ => ("assets/icons/ethernet.svg", get_iconflow_icon("ethernet").0, get_iconflow_icon("ethernet").1),
+            let icon_path = match adapter_type {
+                "蓝牙" => "assets/icons/bluetooth.svg",
+                "WiFi" => "assets/icons/wifi.svg",
+                _ => "assets/icons/ethernet.svg",
             };
             
             // 格式化显示：蓝牙or网卡orWiFi：制造商-型号-速度
@@ -619,8 +622,6 @@ impl SystemInfo {
             network_adapters.push(HardwareItem {
                 text,
                 icon_path: icon_path.to_string(),
-                icon_char: icon_char.to_string(),
-                icon_family: icon_family.to_string(),
             });
         }
 
@@ -628,8 +629,6 @@ impl SystemInfo {
             network_adapters.push(HardwareItem {
                 text: "未知网络适配器".to_string(),
                 icon_path: "assets/icons/ethernet.svg".to_string(),
-                icon_char: get_iconflow_icon("ethernet").0,
-                icon_family: get_iconflow_icon("ethernet").1,
             });
         }
 
@@ -736,9 +735,7 @@ impl SystemInfo {
             
             audio_info.push(HardwareItem {
                 text,
-                icon_path: "assets/icons/sound-card.svg".to_string(),
-                icon_char: get_iconflow_icon("speaker").0,
-                icon_family: get_iconflow_icon("speaker").1,
+                icon_path: "assets/icons/volume-off-fill.svg".to_string(),
             });
         }
         
@@ -746,9 +743,7 @@ impl SystemInfo {
         if audio_info.is_empty() {
             audio_info.push(HardwareItem {
                 text: "未检测到声卡信息".to_string(),
-                icon_path: "assets/icons/sound-card.svg".to_string(),
-                icon_char: get_iconflow_icon("speaker-high").0,
-                icon_family: get_iconflow_icon("speaker-high").1,
+                icon_path: "assets/icons/volume-off-fill.svg".to_string(),
             });
         }
         

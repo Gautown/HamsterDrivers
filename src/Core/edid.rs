@@ -4,15 +4,6 @@ use std::process::Command;
 #[cfg(windows)]
 use std::os::windows::process::CommandExt;
 use super::sysinfo::HardwareItem;
-use iconflow::{try_icon, Pack, Size, Style};
-
-// 辅助函数：获取iconflow图标
-fn get_iconflow_icon(name: &str) -> (String, String) {
-    match try_icon(Pack::Bootstrap, name, Style::Regular, Size::Regular) {
-        Ok(icon) => (char::from_u32(icon.codepoint).unwrap_or('?').to_string(), icon.family.to_string()),
-        Err(_) => ("?".to_string(), "".to_string()),
-    }
-}
 
 /// EDID数据结构
 #[derive(Debug, Clone)]
@@ -386,8 +377,6 @@ pub fn get_direct_monitor_info() -> Result<Vec<HardwareItem>, String> {
                 monitor_info.push(HardwareItem {
                     text,
                     icon_path: "assets/icons/display.svg".to_string(),
-                    icon_char: get_iconflow_icon("display").0,
-                    icon_family: get_iconflow_icon("display").1,
                 });
             }
             
@@ -419,8 +408,6 @@ pub fn get_direct_monitor_info() -> Result<Vec<HardwareItem>, String> {
                         monitor_info.push(HardwareItem {
                             text: format!("显示器{}：未知制造商-未知型号-未知尺寸-{}", j + 1, trimmed),
                             icon_path: "assets/icons/display.svg".to_string(),
-                            icon_char: get_iconflow_icon("desktop").0,
-                            icon_family: get_iconflow_icon("desktop").1,
                         });
                     }
                 }
@@ -433,8 +420,6 @@ pub fn get_direct_monitor_info() -> Result<Vec<HardwareItem>, String> {
                 Ok(vec![HardwareItem {
                     text: "未检测到显示器信息".to_string(),
                     icon_path: "assets/icons/display.svg".to_string(),
-                    icon_char: get_iconflow_icon("desktop").0,
-                icon_family: get_iconflow_icon("desktop").1,
                 }])
             } else {
                 Ok(monitor_info)
@@ -510,8 +495,6 @@ pub fn get_complete_monitor_info(wmi_con: &WMIConnection) -> Result<Vec<Hardware
         monitor_info.push(HardwareItem {
             text: format!("显示器{}：{}-{}", i + 1, edid_str, res_info),
             icon_path: "assets/icons/display.svg".to_string(),
-            icon_char: get_iconflow_icon("desktop").0,
-            icon_family: get_iconflow_icon("desktop").1,
         });
     }
     
@@ -521,8 +504,6 @@ pub fn get_complete_monitor_info(wmi_con: &WMIConnection) -> Result<Vec<Hardware
             monitor_info.push(HardwareItem {
                 text: format!("显示器{}：{}", i + 1, res_info),
                 icon_path: "assets/icons/display.svg".to_string(),
-                icon_char: get_iconflow_icon("desktop").0,
-                icon_family: get_iconflow_icon("desktop").1,
             });
         }
     }
@@ -532,8 +513,6 @@ pub fn get_complete_monitor_info(wmi_con: &WMIConnection) -> Result<Vec<Hardware
         Ok(vec![HardwareItem {
             text: "未检测到显示器信息".to_string(),
             icon_path: "assets/icons/display.svg".to_string(),
-            icon_char: get_iconflow_icon("desktop").0,
-            icon_family: get_iconflow_icon("desktop").1,
         }])
     } else {
         Ok(monitor_info)
