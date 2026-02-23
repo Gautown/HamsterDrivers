@@ -94,6 +94,7 @@ pub struct GuiApp {
 }
 
 #[derive(PartialEq)]
+#[allow(dead_code)]
 enum AppTab {
     Overview,
     DriverInstall,
@@ -107,7 +108,7 @@ enum AppTab {
 }
 
 #[derive(PartialEq)]
-enum DriverManagementSubTab {
+pub enum DriverManagementSubTab {
     Backup,
 }
 
@@ -1496,7 +1497,6 @@ fn show_driver_install_view(ui: &mut egui::Ui, state: &mut GuiApp) {
             state.driver_search_rx = Some(rx);
             
             let ctx = ui.ctx().clone();
-            let mut progress_state = state.driver_search_progress.clone();
             
             thread::spawn(move || {
                 let searcher = DriverSearcher::new();
@@ -1505,7 +1505,7 @@ fn show_driver_install_view(ui: &mut egui::Ui, state: &mut GuiApp) {
                 // 启动进度更新线程
                 let ctx_clone = ctx.clone();
                 thread::spawn(move || {
-                    while let Ok(progress) = progress_rx.recv() {
+                    while let Ok(_progress) = progress_rx.recv() {
                         // 这里应该更新UI状态，但需要共享状态
                         ctx_clone.request_repaint();
                     }

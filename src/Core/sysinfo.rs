@@ -212,11 +212,8 @@ impl SystemInfo {
                             }
                         });
                     
-                    // 如果 SMBIOS 类型可用，使用它
-                    if let Some(gen) = smbios_type_result {
-                        gen
-                    } else {
-                        // 否则回退到 MemoryType
+                    // 如果 SMBIOS 类型可用，使用它，否则回退到 MemoryType
+                    smbios_type_result.unwrap_or_else(|| {
                         memory.get("MemoryType")
                             .and_then(|v| {
                                 if let wmi::Variant::UI4(mem_type) = v {
@@ -233,7 +230,7 @@ impl SystemInfo {
                                 }
                             })
                             .unwrap_or("未知")
-                    }
+                    })
                 };
                 
                 // 频率
