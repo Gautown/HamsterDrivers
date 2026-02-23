@@ -18,14 +18,17 @@ path = "src/main.rs"
 [dependencies]
 eframe = "0.33.3"
 egui = "0.33.3"
+iconflow = { version = "1.0", features = ["all-packs"] }
 # Windows API相关
-windows = { version = "0.52", features = [
+windows = { version = "0.54", features = [
     "Win32_Foundation",
     "Win32_UI_WindowsAndMessaging",
     "Win32_Graphics_Dwm",
     "Win32_UI_Controls",
     "Win32_System_SystemInformation",
     "Win32_System_Threading",
+    "Win32_Devices_DeviceAndDriverInstallation",
+    "Win32_System_Registry",
 ] }
 winapi = { version = "0.3", features = ["dwmapi", "winuser", "libloaderapi", "minwindef", "windef"] }
 raw-window-handle = "0.6"
@@ -44,6 +47,11 @@ hardware-query = "0.2.1"
 resvg = "0.36"
 usvg = "0.36"
 tiny-skia = "0.11"
+
+# 网络请求和HTML解析
+reqwest = { version = "0.12", features = ["json", "stream"] }
+select = "0.6"
+tokio = { version = "1.0", features = ["full"] }
 
 [build-dependencies]
 winres = "0.1"

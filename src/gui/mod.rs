@@ -1,6 +1,92 @@
 // 将原来的ui.rs内容整合进来
 use eframe::egui;
-use crate::core::sysinfo::SystemInfo;
+use iconflow::{try_icon, Pack, Size, Style};
+use crate::core::sysinfo::{SystemInfo, HardwareItem};
+use crate::bootstrap_icons_v1_13_1;
+use std::collections::HashMap;
+
+// 辅助函数：获取图标（优化版）
+fn get_iconflow_icon(name: &str) -> (char, String) {
+    // 首先尝试使用优化版 Bootstrap Icons v1.13.1
+    if let Some((icon_char, font_family)) = crate::bootstrap_icons_v1_13_1_optimized::get_bootstrap_icon_v1_13_1_optimized(name) {
+        return (icon_char, font_family.to_string());
+    }
+    
+    // 如果优化版中没有，则回退到 iconflow
+    match try_icon(Pack::Bootstrap, name, Style::Regular, Size::Regular) {
+        Ok(icon) => {
+            // 使用 iconflow 返回的实际字体族名称
+            (char::from_u32(icon.codepoint).unwrap_or('?'), icon.family.to_string())
+        }
+        Err(_) => ('?', "".to_string()),
+    }
+}
+
+// 辅助函数：根据主板制造商获取对应的logo图标
+fn get_motherboard_logo(motherboard: &str) -> (char, String) {
+    let motherboard_lower = motherboard.to_lowercase();
+    
+    // 主板制造商logo映射 - 使用Bootstrap包中可用的图标
+    if motherboard_lower.contains("asus") || motherboard_lower.contains("华硕") {
+        // ASUS品牌，使用电脑图标
+        get_iconflow_icon("pc")
+    } else if motherboard_lower.contains("gigabyte") || motherboard_lower.contains("技嘉") {
+        // 技嘉品牌，使用主板图标
+        get_iconflow_icon("motherboard")
+    } else if motherboard_lower.contains("msi") || motherboard_lower.contains("微星") {
+        // 微星品牌，使用星星图标
+        get_iconflow_icon("star")
+    } else if motherboard_lower.contains("intel") {
+        // Intel品牌，使用芯片图标
+        get_iconflow_icon("cpu")
+    } else if motherboard_lower.contains("amd") {
+        // AMD品牌，使用处理器图标
+        get_iconflow_icon("cpu")
+    } else if motherboard_lower.contains("dell") {
+        // Dell品牌，使用电脑图标
+        get_iconflow_icon("pc")
+    } else if motherboard_lower.contains("hp") || motherboard_lower.contains("惠普") {
+        // HP品牌，使用电脑图标
+        get_iconflow_icon("laptop")
+    } else if motherboard_lower.contains("lenovo") || motherboard_lower.contains("联想") {
+        // 联想品牌，使用电脑图标
+        get_iconflow_icon("pc")
+    } else if motherboard_lower.contains("acer") || motherboard_lower.contains("宏碁") {
+        // Acer品牌，使用电脑图标
+        get_iconflow_icon("laptop")
+    } else {
+        // 默认使用主板图标
+        get_iconflow_icon("motherboard")
+    }
+}
+
+// 调试函数：检查iconflow中可用的品牌logo图标
+fn debug_available_brand_icons() {
+    println!("检查iconflow中可用的品牌logo图标:");
+    println!("==================================");
+    
+    let brand_icons = [
+        "brand-asus", "brand-gigabyte", "brand-msi", "brand-intel", "brand-amd",
+        "brand-dell", "brand-hp", "brand-lenovo", "brand-acer",
+        "asus", "gigabyte", "msi", "intel", "amd", "dell", "hp", "lenovo", "acer",
+        "computer", "desktop", "laptop", "motherboard", "circuit-board", "cpu", "factory",
+        "windows-logo", "info", "hash", "gear"
+    ];
+    
+    for icon_name in brand_icons.iter() {
+        match try_icon(Pack::Bootstrap, icon_name, Style::Regular, Size::Regular) {
+            Ok(icon) => {
+                println!("✅ {}: 可用 (字符: {}, 字体族: {})", 
+                    icon_name, 
+                    char::from_u32(icon.codepoint).unwrap_or('?'),
+                    icon.family);
+            }
+            Err(_) => {
+                println!("❌ {}: 不可用", icon_name);
+            }
+        }
+    }
+}
 // 新增导入 image crate
 use webbrowser;
 // SVG支持
@@ -8,9 +94,12 @@ use resvg::usvg::{self, TreeParsing};
 use tiny_skia::{Pixmap, Transform};
 use crate::core::features::driver_installer::{DriverInstaller, InstallableDriver};
 use crate::core::features::driver_manager::DriverManagement;
+use crate::core::features::driver_searcher::{DriverSearcher, OnlineDriverInfo, DriverSearchProgress};
 
 use std::sync::mpsc;
 use std::thread;
+
+
 #[allow(dead_code)]
 pub struct GuiApp {
     // 使用core模块中的类型
@@ -20,6 +109,7 @@ pub struct GuiApp {
     pub backup_manager: crate::core::features::backup_manager::BackupManager,
     pub driver_installer: DriverInstaller,
     pub driver_management: DriverManagement,
+    pub driver_searcher: DriverSearcher,
     selected_tab: AppTab,
     pub drivers: Vec<crate::core::driver_manager::DriverInfo>,
     pub backup_history: Vec<String>,
@@ -35,10 +125,17 @@ pub struct GuiApp {
     scanned_drivers: Vec<InstallableDriver>,
     selected_install_driver: Option<usize>,
     scan_directory: String,
+    // 在线驱动搜索相关状态
+    pub online_drivers_searching: bool,
+    pub online_drivers: Vec<OnlineDriverInfo>,
+    pub driver_search_progress: Option<DriverSearchProgress>,
+    pub driver_search_rx: Option<std::sync::mpsc::Receiver<Result<Vec<OnlineDriverInfo>, String>>>,
     // 驱动管理相关状态
-    driver_management_subtab: DriverManagementSubTab,
+  pub driver_management_subtab: DriverManagementSubTab,
     selected_backup_file: Option<usize>,
     driver_management_expanded: bool,
+    // SVG图标缓存
+    icon_cache: HashMap<String, Option<egui::TextureHandle>>,
 }
 
 #[derive(PartialEq)]
@@ -77,6 +174,7 @@ impl GuiApp {
             backup_manager: crate::core::features::backup_manager::BackupManager::new()?,
             driver_installer: DriverInstaller::new(),
             driver_management: DriverManagement::new(),
+            driver_searcher: DriverSearcher::new(),
             selected_tab: AppTab::Overview,
             drivers: Vec::new(),
             backup_history: Vec::new(),
@@ -92,10 +190,17 @@ impl GuiApp {
             scanned_drivers: Vec::new(),
             selected_install_driver: None,
             scan_directory: "./".to_string(),
+            // 在线驱动搜索相关状态
+            online_drivers_searching: false,
+            online_drivers: Vec::new(),
+            driver_search_progress: None,
+            driver_search_rx: None,
             // 驱动管理相关状态
             driver_management_subtab: DriverManagementSubTab::Backup,
             selected_backup_file: None,
             driver_management_expanded: false,
+            // SVG图标缓存
+            icon_cache: HashMap::new(),
             // window drag handled natively on Windows
         })
     }
@@ -110,6 +215,33 @@ impl GuiApp {
     //     // 实际的扫描操作应该在另一个函数中使用适当的异步方法实现
     // }
 
+    /// 显示带图标的硬件项目
+    fn show_hardware_item(&mut self, ui: &mut egui::Ui, item: &HardwareItem, _ctx: &egui::Context) {
+        ui.horizontal(|ui| {
+            ui.add_space(16.0);
+            
+            // 使用iconflow图标显示图标，使用正确的字体设置
+            // 使用iconflow提供的实际字体族名称
+            ui.label(egui::RichText::new(&item.icon_char)
+                .family(egui::FontFamily::Name(item.icon_family.clone().into()))
+                .size(16.0));
+            
+            ui.add_space(8.0);
+            ui.label(&item.text);
+        });
+    }
+    
+    /// 获取或加载图标到缓存
+    fn get_or_load_icon(&mut self, svg_path: &str, target_size: (u32, u32), ctx: &egui::Context) -> Option<egui::TextureHandle> {
+        if let Some(cached) = self.icon_cache.get(svg_path) {
+            return cached.clone();
+        }
+        
+        let icon = self.load_svg_icon(svg_path, target_size, ctx);
+        self.icon_cache.insert(svg_path.to_string(), icon.clone());
+        icon
+    }
+    
     /// 加载SVG图标并转换为纹理
     fn load_svg_icon(&self, svg_path: &str, target_size: (u32, u32), ctx: &egui::Context) -> Option<egui::TextureHandle> {
         match std::fs::read(svg_path) {
@@ -408,7 +540,7 @@ impl eframe::App for GuiApp {
                             ui.painter().text(
                                 rect.center(),
                                 egui::Align2::CENTER_CENTER,
-                                "💾备份驱动",
+                                format!("{}备份驱动", get_iconflow_icon("floppy-disk").0),
                                 font_id.clone(),
                                 if _is_selected || response.hovered() { selected_fg_color } else { egui::Color32::from_rgb(242, 242, 242) }
                             );
@@ -786,42 +918,70 @@ impl eframe::App for GuiApp {
         egui::CentralPanel::default()
             .frame(egui::Frame::new().fill(egui::Color32::WHITE).shadow(egui::epaint::Shadow::NONE))
             .show(ctx, |ui| {
-                ui.vertical(|ui| {
-                    // 添加左边距16px，右边预留滚动条位置
-                    ui.horizontal(|ui| {
-                        ui.add_space(16.0);
+                // 为整个主内容区域添加垂直滚动条（当内容超出窗口时显示）
+                egui::ScrollArea::vertical()
+                    .auto_shrink([true, false])
+                    .show(ui, |ui| {
+                        // 添加上下内边距16px
                         ui.vertical(|ui| {
-                            // 为右边滚动条预留空间
-                            let scrollbar_width = 20.0;
-                            let available_width = ui.available_width();
-                            let content_width = if available_width > scrollbar_width {
-                                available_width - scrollbar_width
-                            } else {
-                                available_width
-                            };
-                            ui.set_width(content_width);
-                            
-                            // 内容继续在这里
-                            match self.selected_tab {
-                                AppTab::Overview => {
-                                    ui.heading("系统概览");
-                            
-                                    // 检查是否需要加载系统信息（仅在首次显示概览页面时）
-                                    if self.system_info.is_none() && !self.system_info_loading {
-                                        self.system_info_loading = true;
-                                        // 在后台线程中加载系统信息，避免UI卡顿
-                                        let (tx, rx) = mpsc::channel();
-                                        thread::spawn(move || {
-                                            let result = SystemInfo::new();
-                                            let _ = tx.send(result);
-                                        });
-                                        self.system_info_rx = Some(rx);
-                                    }
-                                
-                                    if let Some(ref sys_info) = self.system_info {
+                            ui.add_space(16.0);
+                            ui.horizontal(|ui| {
+                                ui.add_space(16.0);
+                                ui.vertical(|ui| {
+                                    // 内容继续在这里
+                                    match self.selected_tab {
+                                        AppTab::Overview => {
+                                            ui.horizontal(|ui| {
+                                                // 添加PC图标
+                                                let (pc_icon, pc_icon_family) = get_iconflow_icon("pc-display");
+                                                let font_family = if pc_icon_family.is_empty() {
+                                                    egui::FontFamily::Proportional
+                                                } else {
+                                                    egui::FontFamily::Name(pc_icon_family.into())
+                                                };
+                                                ui.label(egui::RichText::new(pc_icon.to_string())
+                                                    .family(font_family)
+                                                    .size(24.0));
+                                                ui.add_space(8.0);
+                                                ui.heading("电脑概览");
+                                            });
+                                    
+                                            // 检查是否需要加载系统信息（仅在首次显示概览页面时）
+                                            if self.system_info.is_none() && !self.system_info_loading {
+                                                self.system_info_loading = true;
+                                                // 在后台线程中加载系统信息，避免UI卡顿
+                                                let (tx, rx) = mpsc::channel();
+                                                thread::spawn(move || {
+                                                    let result = SystemInfo::new();
+                                                    let _ = tx.send(result);
+                                                });
+                                                self.system_info_rx = Some(rx);
+                                            }
+                                        
+                                            if let Some(ref sys_info) = self.system_info {
+                                        // 克隆所有硬件信息以避免借用冲突
+                                        let memory_info: Vec<HardwareItem> = sys_info.memory_info.clone();
+                                        let disk_info: Vec<HardwareItem> = sys_info.disk_info.clone();
+                                        let network_adapters: Vec<HardwareItem> = sys_info.network_adapters.clone();
+                                        let gpu_info: Vec<HardwareItem> = sys_info.gpu_info.clone();
+                                        let monitor_info: Vec<HardwareItem> = sys_info.monitor_info.clone();
+                                        
                                         // 显示操作系统信息
                                         if let Some(ref os_name) = sys_info.os_name {
-                                            ui.label(format!("操作系统: {}", os_name));
+                                            ui.horizontal(|ui| {
+                                                // 添加windows图标
+                                                let (windows_icon, windows_icon_family) = get_iconflow_icon("windows");
+                                                let font_family = if windows_icon_family.is_empty() {
+                                                    egui::FontFamily::Proportional
+                                                } else {
+                                                    egui::FontFamily::Name(windows_icon_family.into())
+                                                };
+                                                ui.label(egui::RichText::new(windows_icon.to_string())
+                                                    .family(font_family)
+                                                    .size(16.0));
+                                                ui.add_space(8.0);
+                                                ui.label(format!("操作系统: {}", os_name));
+                                            });
                                         }
                                         
                                         // 显示版本信息：使用更准确的方法获取Windows版本
@@ -832,85 +992,165 @@ impl eframe::App for GuiApp {
                                             } else {
                                                 "未知版本".to_string()
                                             };
-                                            ui.label(format!("版本: {}", version_display));
+                                            ui.horizontal(|ui| {
+                                                // 添加版本图标
+                                                let (version_icon, version_icon_family) = get_iconflow_icon("r-square");
+                                                let font_family = if version_icon_family.is_empty() {
+                                                    egui::FontFamily::Proportional
+                                                } else {
+                                                    egui::FontFamily::Name(version_icon_family.into())
+                                                };
+                                                ui.label(egui::RichText::new(version_icon.to_string())
+                                                    .family(font_family)
+                                                    .size(16.0));
+                                                ui.add_space(8.0);
+                                                ui.label(format!("版本: {}", version_display));
+                                            });
                                         }
                                         
                                         // 显示操作系统版本号
                                         if let Some(ref os_version) = sys_info.os_version {
-                                            ui.label(format!("版本号: {}", os_version));
+                                            ui.horizontal(|ui| {
+                                                // 添加版本号图标
+                                                let (version_icon, version_icon_family) = get_iconflow_icon("r-square");
+                                                let font_family = if version_icon_family.is_empty() {
+                                                    egui::FontFamily::Proportional
+                                                } else {
+                                                    egui::FontFamily::Name(version_icon_family.into())
+                                                };
+                                                ui.label(egui::RichText::new(version_icon.to_string())
+                                                    .family(font_family)
+                                                    .size(16.0));
+                                                ui.add_space(8.0);
+                                                ui.label(format!("版本号: {}", os_version));
+                                            });
                                         }
                                         
                                         // 显示内部版本号
                                         if let Some(ref os_version_formatted) = sys_info.os_version_formatted {
-                                            ui.label(format!("内部版本: {}", os_version_formatted));
+                                            ui.horizontal(|ui| {
+                                                // 添加内部版本图标
+                                                let (build_icon, build_icon_family) = get_iconflow_icon("r-square");
+                                                let font_family = if build_icon_family.is_empty() {
+                                                    egui::FontFamily::Proportional
+                                                } else {
+                                                    egui::FontFamily::Name(build_icon_family.into())
+                                                };
+                                                ui.label(egui::RichText::new(build_icon.to_string())
+                                                    .family(font_family)
+                                                    .size(16.0));
+                                                ui.add_space(8.0);
+                                                ui.label(format!("内部版本: {}", os_version_formatted));
+                                            });
                                         }
                                         
                                         ui.separator();
                                         
                                         // 显示硬件信息
                                         if let Some(ref manufacturer) = sys_info.manufacturer {
-                                            ui.label(format!("制造商: {}", manufacturer));
+                                            ui.horizontal(|ui| {
+                                                // 添加制造商图标
+                                                let (factory_icon, factory_icon_family) = get_iconflow_icon("building");
+                                                let font_family = if factory_icon_family.is_empty() {
+                                                    egui::FontFamily::Proportional
+                                                } else {
+                                                    egui::FontFamily::Name(factory_icon_family.into())
+                                                };
+                                                ui.label(egui::RichText::new(factory_icon.to_string())
+                                                    .family(font_family)
+                                                    .size(16.0));
+                                                ui.add_space(8.0);
+                                                ui.label(format!("制造商: {}", manufacturer));
+                                            });
                                         }
                                         if let Some(ref motherboard) = sys_info.motherboard {
-                                            ui.label(format!("主板: {}", motherboard));
+                                            ui.horizontal(|ui| {
+                                                // 添加主板制造商logo图标
+                                                let (board_icon, board_icon_family) = get_motherboard_logo("bi-motherboard");
+                                                let font_family = if board_icon_family.is_empty() {
+                                                    egui::FontFamily::Proportional
+                                                } else {
+                                                    egui::FontFamily::Name(board_icon_family.into())
+                                                };
+                                                ui.label(egui::RichText::new(board_icon.to_string())
+                                                    .family(font_family)
+                                                    .size(16.0));
+                                                ui.add_space(8.0);
+                                                ui.label(format!("主板: {}", motherboard));
+                                            });
                                         }
                                         if let Some(ref cpu) = sys_info.cpu {
-                                            ui.label(format!("CPU: {}", cpu));
+                                            ui.horizontal(|ui| {
+                                                // 添加CPU图标
+                                                let (cpu_icon, cpu_icon_family) = get_iconflow_icon("bi-cpu");
+                                                let font_family = if cpu_icon_family.is_empty() {
+                                                    egui::FontFamily::Proportional
+                                                } else {
+                                                    egui::FontFamily::Name(cpu_icon_family.into())
+                                                };
+                                                ui.label(egui::RichText::new(cpu_icon.to_string())
+                                                    .family(font_family)
+                                                    .size(16.0));
+                                                ui.add_space(8.0);
+                                                ui.label(format!("CPU: {}", cpu));
+                                            });
                                         }
                                         
                                         ui.separator();
                                         
                                         // 显示内存信息
                                         ui.label("内存信息:");
-                                        for mem in &sys_info.memory_info {
-                                            ui.label(format!("  {}", mem));
+                                        for mem in &memory_info {
+                                            self.show_hardware_item(ui, mem, ctx);
                                         }
                                         
                                         ui.separator();
                                         
                                         // 显示磁盘信息
                                         ui.label("磁盘信息:");
-                                        for disk in &sys_info.disk_info {
-                                            ui.label(format!("  {}", disk));
+                                        for disk in &disk_info {
+                                            self.show_hardware_item(ui, disk, ctx);
                                         }
                                         
                                         ui.separator();
                                         
                                         // 显示其他硬件信息
                                         ui.label("网络适配器:");
-                                        for adapter in &sys_info.network_adapters {
-                                            ui.label(format!("  {}", adapter));
+                                        for adapter in &network_adapters {
+                                            self.show_hardware_item(ui, adapter, ctx);
                                         }
                                         
                                         ui.separator();
                                         
                                         ui.label("显卡信息:");
-                                        for gpu in &sys_info.gpu_info {
-                                            ui.label(format!("  {}", gpu));
+                                        for gpu in &gpu_info {
+                                            self.show_hardware_item(ui, gpu, ctx);
                                         }
                                         
                                         ui.separator();
                                         
                                         ui.label("显示器信息:");
-                                        for monitor in &sys_info.monitor_info {
-                                            ui.label(format!("  {}", monitor));
+                                        for monitor in &monitor_info {
+                                            self.show_hardware_item(ui, monitor, ctx);
                                         }
-                                    } else if self.system_info_loading {
-                                        ui.label("正在加载系统信息...");
-                                    } else if let Some(ref error) = self.system_info_error {
-                                        ui.label("加载系统信息失败:");
-                                        ui.label(format!("  {}", error));
-                                    } else {
-                                        ui.label("点击切换到此页面以加载系统信息");
+                                            } else if self.system_info_loading {
+                                                ui.label("正在加载系统信息...");
+                                            } else if let Some(ref error) = self.system_info_error {
+                                                ui.label("加载系统信息失败:");
+                                                ui.label(format!("  {}", error));
+                                            } else {
+                                                ui.label("点击切换到此页面以加载系统信息");
+                                            }
+                                        },
+                                        _ => {
+                                            show_advanced_features(ui, self);
+                                        }
                                     }
-                                },
-                                _ => {
-                                    show_advanced_features(ctx, self);
-                                }
-                            }
+                                });
+                            });
+                            ui.add_space(16.0);
                         });
                     });
-                });
             });
 
         // 只在需要时刷新UI，避免不必要的重绘
@@ -918,21 +1158,23 @@ impl eframe::App for GuiApp {
 }
 
 // UI中的高级功能界面
-fn show_advanced_features(ctx: &egui::Context, state: &mut GuiApp) {
+fn show_advanced_features(ui: &mut egui::Ui, state: &mut GuiApp) {
     match state.selected_tab {
-        AppTab::DriverInstall => show_driver_install_view(ctx, state),
-        AppTab::DriverBackup => show_backup_driver_view(ctx, state),
-        AppTab::DriverRestore => show_restore_driver_view(ctx, state),
-        AppTab::DriverUninstall => show_uninstall_driver_view(ctx, state),
-        AppTab::SystemGameComponents => show_system_game_components_view(ctx, state),
-        AppTab::BackupRestore => show_backup_view(ctx, state),
+        AppTab::DriverInstall => show_driver_install_view(ui, state),
+        AppTab::DriverBackup => show_backup_driver_view(ui.ctx(), state),
+        AppTab::DriverRestore => show_restore_driver_view(ui.ctx(), state),
+        AppTab::DriverUninstall => show_uninstall_driver_view(ui.ctx(), state),
+        AppTab::SystemGameComponents => show_system_game_components_view(ui.ctx(), state),
+        AppTab::BackupRestore => show_backup_view(ui.ctx(), state),
         _ => {}
     }
 }
 
 // 系统、游戏运行组件视图
 fn show_system_game_components_view(ctx: &egui::Context, _state: &mut GuiApp) {
-    egui::CentralPanel::default().show(ctx, |ui| {
+    egui::CentralPanel::default()
+        .frame(egui::Frame::new().fill(egui::Color32::WHITE).shadow(egui::epaint::Shadow::NONE))
+        .show(ctx, |ui| {
         ui.heading("系统、游戏运行组件");
 
         ui.label("这里将显示系统组件和游戏运行组件的管理功能");
@@ -958,7 +1200,9 @@ fn show_system_game_components_view(ctx: &egui::Context, _state: &mut GuiApp) {
 }
 
 fn show_backup_view(ctx: &egui::Context, _state: &mut GuiApp) {
-    egui::CentralPanel::default().show(ctx, |ui| {
+    egui::CentralPanel::default()
+        .frame(egui::Frame::new().fill(egui::Color32::WHITE).shadow(egui::epaint::Shadow::NONE))
+        .show(ctx, |ui| {
         ui.heading("备份与恢复");
 
         if ui.button("备份选中驱动").clicked() {
@@ -1013,7 +1257,9 @@ fn show_backup_view(ctx: &egui::Context, _state: &mut GuiApp) {
 
 
 fn show_backup_driver_view(ctx: &egui::Context, state: &mut GuiApp) {
-    egui::CentralPanel::default().show(ctx, |ui| {
+    egui::CentralPanel::default()
+        .frame(egui::Frame::new().fill(egui::Color32::WHITE).shadow(egui::epaint::Shadow::NONE))
+        .show(ctx, |ui| {
         ui.heading("备份驱动");
         
         if state.drivers.is_empty() {
@@ -1101,7 +1347,9 @@ fn show_backup_driver_view(ctx: &egui::Context, state: &mut GuiApp) {
 }
 
 fn show_restore_driver_view(ctx: &egui::Context, state: &mut GuiApp) {
-    egui::CentralPanel::default().show(ctx, |ui| {
+    egui::CentralPanel::default()
+        .frame(egui::Frame::new().fill(egui::Color32::WHITE).shadow(egui::epaint::Shadow::NONE))
+        .show(ctx, |ui| {
         ui.heading("恢复驱动");
         
         // 获取备份文件列表
@@ -1184,7 +1432,9 @@ fn show_restore_driver_view(ctx: &egui::Context, state: &mut GuiApp) {
 }
 
 fn show_uninstall_driver_view(ctx: &egui::Context, state: &mut GuiApp) {
-    egui::CentralPanel::default().show(ctx, |ui| {
+    egui::CentralPanel::default()
+        .frame(egui::Frame::new().fill(egui::Color32::WHITE).shadow(egui::epaint::Shadow::NONE))
+        .show(ctx, |ui| {
         ui.heading("卸载驱动");
         
         if state.drivers.is_empty() {
@@ -1258,114 +1508,179 @@ fn show_uninstall_driver_view(ctx: &egui::Context, state: &mut GuiApp) {
     });
 }
 
-fn show_driver_install_view(ctx: &egui::Context, state: &mut GuiApp) {
-    egui::CentralPanel::default().show(ctx, |ui| {
-        ui.heading("驱动安装");
-        
-        // 扫描目录设置
-        ui.horizontal(|ui| {
-            ui.label("扫描目录:");
-            ui.text_edit_singleline(&mut state.scan_directory);
-            if ui.button("浏览").clicked() {
-                // 这里可以添加目录选择对话框
-            }
+fn show_driver_install_view(ui: &mut egui::Ui, state: &mut GuiApp) {
+    // 主内容区域已经包含ScrollArea和内边距，这里直接显示内容
+    ui.heading("驱动安装");
+    
+    // 检查搜索进度更新
+    if let Some(ref rx) = state.driver_search_rx {
+        // 检查是否有最终结果
+        if let Ok(result) = rx.try_recv() {
+            state.online_drivers_searching = false;
+            state.driver_search_rx = None;
+            state.driver_search_progress = None;
             
-            if ui.button("扫描驱动文件").clicked() {
-                let path = std::path::PathBuf::from(&state.scan_directory);
-                match state.driver_installer.scan_drivers_in_directory(&path) {
-                    Ok(drivers) => {
-                        state.scanned_drivers = drivers;
-                    }
-                    Err(e) => {
-                        ui.colored_label(egui::Color32::RED, format!("扫描失败: {}", e));
-                    }
+            match result {
+                Ok(drivers) => {
+                    state.online_drivers = drivers;
+                }
+                Err(e) => {
+                    ui.colored_label(egui::Color32::RED, format!("搜索失败: {}", e));
                 }
             }
-        });
-        
-        ui.separator();
-        
-        // 显示扫描到的驱动文件
-        if !state.scanned_drivers.is_empty() {
-            ui.heading("可安装的驱动文件");
+        }
+    }
+    
+    // 在线驱动搜索按钮和进度条
+    ui.horizontal(|ui| {
+        // 搜索按钮
+                let button = egui::Button::new(egui::RichText::new("搜索驱动").size(18.0).color(egui::Color32::WHITE))
+                    .fill(egui::Color32::from_rgb(0, 111, 201));
+                
+                if ui.add(button).clicked() && !state.online_drivers_searching {
+            state.online_drivers_searching = true;
+            state.online_drivers.clear();
             
-            for (i, driver) in state.scanned_drivers.iter().enumerate() {
-                ui.horizontal(|ui| {
-                    // 选择框
-                    let mut is_selected = state.selected_install_driver == Some(i);
-                    if ui.checkbox(&mut is_selected, "").changed() {
-                        if is_selected {
-                            state.selected_install_driver = Some(i);
-                        } else {
-                            state.selected_install_driver = None;
-                        }
-                    }
-                    
-                    // 驱动信息
-                    ui.vertical(|ui| {
-                        ui.label(format!("名称: {}", driver.display_name));
-                        ui.label(format!("版本: {}", driver.version));
-                        ui.label(format!("制造商: {}", driver.manufacturer));
-                        ui.label(format!("安装方法: {:?}", driver.install_method));
-                        ui.label(format!("签名状态: {}", driver.signature_status));
-                    });
-                    
-                    // 安装按钮
-                    if ui.button("安装").clicked() {
-                        let result = state.driver_installer.install_driver(driver);
-                        if result.success {
-                            ui.colored_label(egui::Color32::GREEN, "✓ 安装成功");
-                        } else {
-                            ui.colored_label(egui::Color32::RED, format!("✗ 安装失败: {}", result.message));
-                        }
+            // 初始化进度状态
+            state.driver_search_progress = Some(DriverSearchProgress {
+                status: "开始搜索...".to_string(),
+                progress: 0.0,
+                current_step: "正在扫描电脑硬件... ...".to_string(),
+                total_steps: 4,
+                current_step_index: 0,
+            });
+            
+            // 在后台线程中搜索驱动
+            let (tx, rx) = mpsc::channel();
+            state.driver_search_rx = Some(rx);
+            
+            let ctx = ui.ctx().clone();
+            let mut progress_state = state.driver_search_progress.clone();
+            
+            thread::spawn(move || {
+                let searcher = DriverSearcher::new();
+                let (progress_tx, progress_rx) = mpsc::channel();
+                
+                // 启动进度更新线程
+                let ctx_clone = ctx.clone();
+                thread::spawn(move || {
+                    while let Ok(progress) = progress_rx.recv() {
+                        // 这里应该更新UI状态，但需要共享状态
+                        ctx_clone.request_repaint();
                     }
                 });
-                ui.separator();
-            }
-            
-            // 批量安装按钮
-            if ui.button("批量安装所有驱动").clicked() {
-                for driver in &state.scanned_drivers {
-                    let result = state.driver_installer.install_driver(driver);
-                    if result.success {
-                        ui.colored_label(egui::Color32::GREEN, format!("✓ {} 安装成功", driver.name));
-                    } else {
-                        ui.colored_label(egui::Color32::RED, format!("✗ {} 安装失败: {}", driver.name, result.message));
-                    }
-                }
-            }
-        } else {
-            ui.label("请先扫描目录中的驱动文件");
+                
+                let result = searcher.search_online_drivers(Some(progress_tx));
+                let _ = tx.send(result);
+                ctx.request_repaint();
+            });
         }
         
-        ui.separator();
-        
-        // 安装历史记录
-        ui.heading("安装历史记录");
-        let history = state.driver_installer.get_installation_history();
-        if !history.is_empty() {
-            for record in history.iter() {
-                ui.horizontal(|ui| {
-                    if record.success {
-                        ui.colored_label(egui::Color32::GREEN, "✓");
-                    } else {
-                        ui.colored_label(egui::Color32::RED, "✗");
-                    }
-                    ui.vertical(|ui| {
-                        ui.label(format!("驱动: {}", record.driver_name));
-                        ui.label(format!("时间: {}", record.timestamp));
-                        ui.label(format!("结果: {}", record.message));
-                    });
-                });
-                ui.separator();
-            }
+        // 搜索进度条（放在按钮右边）
+        if state.online_drivers_searching {
+            // 添加间距
+            ui.add_space(16.0);
             
-            if ui.button("清空历史记录").clicked() {
-                state.driver_installer.clear_installation_history();
-            }
-        } else {
-            ui.label("暂无安装记录");
+            // 显示搜索状态提示
+            ui.vertical(|ui| {
+                // 当前步骤状态在进度条上方
+                if let Some(ref progress) = state.driver_search_progress {
+                    ui.label(egui::RichText::new(&progress.current_step).size(14.0));
+                } else {
+                    ui.label(egui::RichText::new("正在扫描电脑硬件... ...").size(14.0));
+                }
+                
+                // 进度条和百分比在同一行，宽度增加到原来的3倍（450px）
+                ui.horizontal(|ui| {
+                    // 动态进度条：基于时间模拟进度变化
+                    let progress_value = if state.online_drivers_searching {
+                        // 模拟动态进度：从0.01到0.99循环变化（1%-99%）
+                        let elapsed = std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .unwrap_or_default()
+                            .as_secs_f32();
+                        
+                        // 使用正弦函数创建平滑的进度动画
+                        let base_progress = (elapsed * 0.3).sin() * 0.49 + 0.5; // 在0.01到0.99之间变化
+                        base_progress.clamp(0.01, 0.99)
+                    } else {
+                        0.0
+                    };
+                    
+                    ui.add(egui::ProgressBar::new(progress_value).desired_width(600.0)); // 宽度增加到600px
+                    ui.label(format!("{:.0}%", progress_value * 100.0));
+                });
+            });
         }
     });
+    
+    ui.separator();
+    
+    // 显示搜索到的在线驱动
+    if !state.online_drivers.is_empty() {
+        ui.heading("可更新的驱动程序");
+        
+        // 使用Phosphor Icons作为状态指示图标
+        // 不再需要预先加载SVG图标
+        
+        for (_i, driver) in state.online_drivers.iter().enumerate() {
+
+            ui.horizontal(|ui| {
+                // 驱动信息 - 单行显示模式
+                ui.horizontal(|ui| {
+                    // 硬件名 + 品牌型号
+                    ui.label(format!("{} - {}", driver.display_name, driver.manufacturer));
+                    
+                    // 当前版本
+                    if let Some(current_version) = &driver.current_version {
+                        ui.label(format!("当前: {}", current_version));
+                    } else {
+                        ui.colored_label(egui::Color32::BLUE, "未安装");
+                    }
+                    
+                    // 最新版本
+                    ui.label(format!("最新: {}", driver.version));
+                    
+                    // 状态指示 - 使用iconflow图标
+                    if let Some(current_version) = &driver.current_version {
+                if current_version == &driver.version {
+                    // 当前版本与最新版本一致 - 使用绿色勾选图标
+                    let (icon_char, icon_family) = get_iconflow_icon("check-circle");
+                    ui.colored_label(egui::Color32::GREEN, egui::RichText::new(icon_char.to_string()).family(egui::FontFamily::Name(icon_family.into())).size(16.0));
+                } else {
+                    // 需要更新 - 使用黄色感叹号图标
+                    let (icon_char, icon_family) = get_iconflow_icon("warning-circle");
+                    ui.colored_label(egui::Color32::YELLOW, egui::RichText::new(icon_char.to_string()).family(egui::FontFamily::Name(icon_family.into())).size(16.0));
+                }
+            } else {
+                // 未安装驱动 - 使用蓝色问号图标
+                let (icon_char, icon_family) = get_iconflow_icon("question");
+                ui.colored_label(egui::Color32::BLUE, egui::RichText::new(icon_char.to_string()).family(egui::FontFamily::Name(icon_family.into())).size(16.0));
+            }
+                });
+                
+                // 操作按钮 - 在同一行显示
+                ui.horizontal(|ui| {
+                    // 更新按钮 - 只有在需要更新时才可点击
+                    let update_enabled = driver.current_version.as_ref().map_or(true, |v| v != &driver.version);
+                    let update_button = ui.add_enabled(update_enabled, egui::Button::new("更新"));
+                    
+                    // 重装按钮 - 总是可点击
+                    let reinstall_button = ui.button("重装");
+                    
+                    if update_button.clicked() {
+                        // 执行更新操作
+                        ui.colored_label(egui::Color32::GREEN, format!("开始更新 {}...", driver.display_name));
+                    }
+                    
+                    if reinstall_button.clicked() {
+                        // 执行重装操作
+                        ui.colored_label(egui::Color32::BLUE, format!("开始重装 {}...", driver.display_name));
+                    }
+                });
+            });
+            ui.separator();
+        }
+    }
 }
 

@@ -2,6 +2,23 @@ use std::collections::HashMap;
 use wmi::{WMIConnection, COMLibrary};
 use hardware_query::HardwareInfo;
 use super::edid;
+use iconflow::{try_icon, Pack, Size, Style};
+
+// 辅助函数：获取iconflow图标
+fn get_iconflow_icon(name: &str) -> (String, String) {
+    match try_icon(Pack::Bootstrap, name, Style::Regular, Size::Regular) {
+        Ok(icon) => (char::from_u32(icon.codepoint).unwrap_or('?').to_string(), icon.family.to_string()),
+        Err(_) => ("?".to_string(), "".to_string()),
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct HardwareItem {
+    pub text: String,
+    pub icon_path: String,
+    pub icon_char: String,
+    pub icon_family: String,
+}
 
 #[derive(Debug)]
 pub struct SystemInfo {
@@ -11,11 +28,12 @@ pub struct SystemInfo {
     pub manufacturer: Option<String>,
     pub motherboard: Option<String>,
     pub cpu: Option<String>,
-    pub memory_info: Vec<String>,
-    pub disk_info: Vec<String>,
-    pub gpu_info: Vec<String>,
-    pub network_adapters: Vec<String>,
-    pub monitor_info: Vec<String>,
+    pub memory_info: Vec<HardwareItem>,
+    pub disk_info: Vec<HardwareItem>,
+    pub gpu_info: Vec<HardwareItem>,
+    pub network_adapters: Vec<HardwareItem>,
+    pub monitor_info: Vec<HardwareItem>,
+    pub audio_info: Vec<HardwareItem>,
 }
 
 impl SystemInfo {
@@ -32,6 +50,7 @@ impl SystemInfo {
         let gpu_info = Self::get_gpu_info(&wmi_con)?;
         let network_adapters = Self::get_network_adapters(&wmi_con)?;
         let monitor_info = Self::get_monitor_info(&wmi_con)?;
+        let audio_info = Self::get_audio_info(&wmi_con)?;
 
         Ok(SystemInfo {
             os_name: Some(os_info.0),
@@ -45,6 +64,7 @@ impl SystemInfo {
             gpu_info,
             network_adapters,
             monitor_info,
+            audio_info,
         })
     }
 
@@ -114,7 +134,7 @@ impl SystemInfo {
         }
     }
 
-    fn get_memory_info(wmi_con: &WMIConnection) -> Result<Vec<String>, String> {
+    fn get_memory_info(wmi_con: &WMIConnection) -> Result<Vec<HardwareItem>, String> {
         let results: Vec<HashMap<String, wmi::Variant>> = wmi_con
             .raw_query("SELECT Manufacturer, Capacity, MemoryType, Speed, SMBIOSMemoryType FROM Win32_PhysicalMemory")
             .map_err(|e| format!("WMI query失败: {}", e))?;
@@ -133,12 +153,15 @@ impl SystemInfo {
         
         if total_memory > 0 {
             let total_gb = (total_memory as f64 / (1024.0 * 1024.0 * 1024.0)).round() as u32;
-            memory_info.push(format!("总内存: {} GB", total_gb));
+            memory_info.push(HardwareItem {
+                text: format!("总内存: {} GB", total_gb),
+                icon_path: "assets/icons/memory.svg".to_string(),
+                icon_char: get_iconflow_icon("memory").0,
+                icon_family: get_iconflow_icon("memory").1,
+            });
             
             // 显示每个内存条的详细信息
             for (i, memory) in results.iter().enumerate() {
-                let mut mem_info = String::new();
-                
                 // 制造商
                 let manufacturer = memory.get("Manufacturer")
                     .and_then(|v| if let wmi::Variant::String(s) = v { Some(s.as_str()) } else { None })
@@ -202,29 +225,37 @@ impl SystemInfo {
                     .unwrap_or(0);
                 
                 // 格式化显示：内存n：制造商-容量-代数@频率
-                mem_info.push_str(&format!("内存{}：{}-{}GB-{}@{}MHz", 
-                    i + 1, manufacturer, capacity_gb, generation, speed));
+                let text = format!("内存{}：{}-{}GB-{}@{}MHz", 
+                    i + 1, manufacturer, capacity_gb, generation, speed);
                 
-                memory_info.push(mem_info);
+                memory_info.push(HardwareItem {
+                    text,
+                    icon_path: "assets/icons/memory.svg".to_string(),
+                    icon_char: get_iconflow_icon("memory").0,
+                    icon_family: get_iconflow_icon("memory").1,
+                });
             }
         }
 
         if memory_info.is_empty() {
-            memory_info.push("未知内存".to_string());
+            memory_info.push(HardwareItem {
+                text: "未知内存".to_string(),
+                icon_path: "assets/icons/memory.svg".to_string(),
+                icon_char: get_iconflow_icon("memory").0,
+                icon_family: get_iconflow_icon("memory").1,
+            });
         }
 
         Ok(memory_info)
     }
 
-    fn get_disk_info(wmi_con: &WMIConnection) -> Result<Vec<String>, String> {
+    fn get_disk_info(wmi_con: &WMIConnection) -> Result<Vec<HardwareItem>, String> {
         let results: Vec<HashMap<String, wmi::Variant>> = wmi_con
             .raw_query("SELECT Manufacturer, Model, Size, MediaType FROM Win32_DiskDrive")
             .map_err(|e| format!("WMI query失败: {}", e))?;
 
         let mut disk_info = Vec::new();
         for (i, disk) in results.iter().enumerate() {
-            let mut info = String::new();
-            
             // 制造商（去掉"(标准磁盘驱动器)"描述）
             let manufacturer = disk.get("Manufacturer")
                 .and_then(|v| if let wmi::Variant::String(s) = v { Some(s.as_str()) } else { None })
@@ -314,22 +345,39 @@ impl SystemInfo {
                     }
                 }
             };
+
+            // 根据硬盘类型选择对应的图标
+            let (icon_path, icon_char, icon_family) = match disk_type {
+                "固态" => ("assets/icons/SSD.svg", get_iconflow_icon("hdd").0, get_iconflow_icon("hdd").1),
+                "U盘" => ("assets/icons/usb.svg", get_iconflow_icon("usb").0, get_iconflow_icon("usb").1),
+                _ => ("assets/icons/hdd.svg", get_iconflow_icon("hdd").0, get_iconflow_icon("hdd").1),
+            };
             
             // 格式化显示：硬盘n：制造商-型号-容量-类型
-            info.push_str(&format!("硬盘{}：{}-{}-{}GB-{}", 
-                i + 1, manufacturer, model, capacity_gb, disk_type));
+            let text = format!("硬盘{}：{}-{}-{}GB-{}", 
+                i + 1, manufacturer, model, capacity_gb, disk_type);
             
-            disk_info.push(info);
+            disk_info.push(HardwareItem {
+                text,
+                icon_path: icon_path.to_string(),
+                icon_char: icon_char.to_string(),
+                icon_family: icon_family.to_string(),
+            });
         }
 
         if disk_info.is_empty() {
-            disk_info.push("未知硬盘".to_string());
+            disk_info.push(HardwareItem {
+                text: "未知硬盘".to_string(),
+                icon_path: "assets/icons/hdd.svg".to_string(),
+                icon_char: get_iconflow_icon("hdd").0,
+                icon_family: get_iconflow_icon("hdd").1,
+            });
         }
 
         Ok(disk_info)
     }
 
-    fn get_gpu_info(_wmi_con: &WMIConnection) -> Result<Vec<String>, String> {
+    fn get_gpu_info(_wmi_con: &WMIConnection) -> Result<Vec<HardwareItem>, String> {
         let mut gpu_info = Vec::new();
         
         // 使用hardware-query库获取显卡信息
@@ -339,8 +387,6 @@ impl SystemInfo {
                 let gpus = hw_info.gpus();
                 
                 for (i, gpu) in gpus.iter().enumerate() {
-                    let mut gpu_info_str = String::new();
-                    
                     // 获取显卡制造商和型号
                     let vendor = gpu.vendor();
                     let model_name = gpu.model_name();
@@ -365,20 +411,23 @@ impl SystemInfo {
                     };
                     
                     // 格式化显示：显卡n：制造商+型号+显存
-                    gpu_info_str.push_str(&format!("显卡{}：{}+{}+{}GB", i + 1, vendor, model_name, vram_gb));
+                    let text = format!("显卡{}：{}+{}+{}GB", i + 1, vendor, model_name, vram_gb);
                     
-                    gpu_info.push(gpu_info_str);
+                    gpu_info.push(HardwareItem {
+                        text,
+                        icon_path: "assets/icons/gpu-card.svg".to_string(),
+                        icon_char: get_iconflow_icon("gpu-card").0,
+                        icon_family: get_iconflow_icon("gpu-card").1,
+                    });
                 }
             }
-            Err(e) => {
+            Err(_e) => {
                 // 如果hardware-query失败，回退到WMI查询
                 let results: Vec<HashMap<String, wmi::Variant>> = _wmi_con
                     .raw_query("SELECT Name FROM Win32_VideoController WHERE Name != 'Microsoft Basic Display Adapter'")
                     .map_err(|e| format!("WMI query failed: {}", e))?;
                 
                 for (i, gpu) in results.iter().enumerate() {
-                    let mut gpu_info_str = String::new();
-                    
                     let name = gpu.get("Name")
                         .and_then(|v| if let wmi::Variant::String(s) = v { Some(s.as_str()) } else { None })
                         .unwrap_or("未知型号");
@@ -398,14 +447,24 @@ impl SystemInfo {
                     
                     let vram_gb = Self::get_vram_by_model(name);
                     
-                    gpu_info_str.push_str(&format!("显卡{}：{}+{}+{}GB", i + 1, manufacturer, model, vram_gb));
-                    gpu_info.push(gpu_info_str);
+                    let text = format!("显卡{}：{}+{}+{}GB", i + 1, manufacturer, model, vram_gb);
+                    gpu_info.push(HardwareItem {
+                        text,
+                        icon_path: "assets/icons/gpu-card.svg".to_string(),
+                        icon_char: get_iconflow_icon("graphics-card").0,
+                        icon_family: get_iconflow_icon("graphics-card").1,
+                    });
                 }
             }
         }
 
         if gpu_info.is_empty() {
-            gpu_info.push("未知显卡".to_string());
+            gpu_info.push(HardwareItem {
+                text: "未知显卡".to_string(),
+                icon_path: "assets/icons/gpu-card.svg".to_string(),
+                icon_char: get_iconflow_icon("graphics-card").0,
+                icon_family: get_iconflow_icon("graphics-card").1,
+            });
         }
 
         Ok(gpu_info)
@@ -504,15 +563,13 @@ impl SystemInfo {
         }
     }
 
-    fn get_network_adapters(wmi_con: &WMIConnection) -> Result<Vec<String>, String> {
+    fn get_network_adapters(wmi_con: &WMIConnection) -> Result<Vec<HardwareItem>, String> {
         let results: Vec<HashMap<String, wmi::Variant>> = wmi_con
             .raw_query("SELECT Name, Manufacturer, Speed FROM Win32_NetworkAdapter WHERE PhysicalAdapter = TRUE")
             .map_err(|e| format!("WMI query failed: {}", e))?;
 
         let mut network_adapters = Vec::new();
         for adapter in results {
-            let mut adapter_info = String::new();
-            
             // 获取适配器名称
             let name = adapter.get("Name")
                 .and_then(|v| if let wmi::Variant::String(s) = v { Some(s.as_str()) } else { None })
@@ -548,21 +605,38 @@ impl SystemInfo {
                     "网卡"
                 }
             };
+
+            // 根据适配器类型选择对应的图标
+            let (icon_path, icon_char, icon_family) = match adapter_type {
+                "蓝牙" => ("assets/icons/bluetooth.svg", get_iconflow_icon("bluetooth").0, get_iconflow_icon("bluetooth").1),
+                "WiFi" => ("assets/icons/wifi.svg", get_iconflow_icon("wifi").0, get_iconflow_icon("wifi").1),
+                _ => ("assets/icons/ethernet.svg", get_iconflow_icon("ethernet").0, get_iconflow_icon("ethernet").1),
+            };
             
             // 格式化显示：蓝牙or网卡orWiFi：制造商-型号-速度
-            adapter_info.push_str(&format!("{}：{}-{}-{}Mbps", adapter_type, manufacturer, name, speed_mbps));
+            let text = format!("{}：{}-{}-{}Mbps", adapter_type, manufacturer, name, speed_mbps);
             
-            network_adapters.push(adapter_info);
+            network_adapters.push(HardwareItem {
+                text,
+                icon_path: icon_path.to_string(),
+                icon_char: icon_char.to_string(),
+                icon_family: icon_family.to_string(),
+            });
         }
 
         if network_adapters.is_empty() {
-            network_adapters.push("未知网络适配器".to_string());
+            network_adapters.push(HardwareItem {
+                text: "未知网络适配器".to_string(),
+                icon_path: "assets/icons/ethernet.svg".to_string(),
+                icon_char: get_iconflow_icon("ethernet").0,
+                icon_family: get_iconflow_icon("ethernet").1,
+            });
         }
 
         Ok(network_adapters)
     }
 
-    fn get_monitor_info(wmi_con: &WMIConnection) -> Result<Vec<String>, String> {
+    fn get_monitor_info(wmi_con: &WMIConnection) -> Result<Vec<HardwareItem>, String> {
         // 使用EDID模块获取完整的显示器信息
         edid::get_complete_monitor_info(wmi_con)
     }
@@ -643,5 +717,41 @@ impl SystemInfo {
         } else {
             "未知版本".to_string()
         }
+    }
+
+    fn get_audio_info(wmi_con: &WMIConnection) -> Result<Vec<HardwareItem>, String> {
+        let mut audio_info = Vec::new();
+        
+        // 查询声卡设备信息
+        let query = "SELECT Name, Manufacturer, Status FROM Win32_SoundDevice";
+        let result: Vec<HashMap<String, String>> = wmi_con.raw_query(query)
+            .map_err(|e| format!("WMI query failed: {}", e))?;
+        
+        for (i, device) in result.iter().enumerate() {
+            let name = device.get("Name").unwrap_or(&"未知声卡".to_string()).to_string();
+            let manufacturer = device.get("Manufacturer").unwrap_or(&"未知制造商".to_string()).to_string();
+            let status = device.get("Status").unwrap_or(&"未知状态".to_string()).to_string();
+            
+            let text = format!("声卡{}：{}-{}-{}", i + 1, manufacturer, name, status);
+            
+            audio_info.push(HardwareItem {
+                text,
+                icon_path: "assets/icons/sound-card.svg".to_string(),
+                icon_char: get_iconflow_icon("speaker").0,
+                icon_family: get_iconflow_icon("speaker").1,
+            });
+        }
+        
+        // 如果没有检测到声卡信息，添加默认提示
+        if audio_info.is_empty() {
+            audio_info.push(HardwareItem {
+                text: "未检测到声卡信息".to_string(),
+                icon_path: "assets/icons/sound-card.svg".to_string(),
+                icon_char: get_iconflow_icon("speaker-high").0,
+                icon_family: get_iconflow_icon("speaker-high").1,
+            });
+        }
+        
+        Ok(audio_info)
     }
 }

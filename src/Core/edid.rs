@@ -3,6 +3,16 @@ use wmi::{WMIConnection, Variant};
 use std::process::Command;
 #[cfg(windows)]
 use std::os::windows::process::CommandExt;
+use super::sysinfo::HardwareItem;
+use iconflow::{try_icon, Pack, Size, Style};
+
+// 辅助函数：获取iconflow图标
+fn get_iconflow_icon(name: &str) -> (String, String) {
+    match try_icon(Pack::Bootstrap, name, Style::Regular, Size::Regular) {
+        Ok(icon) => (char::from_u32(icon.codepoint).unwrap_or('?').to_string(), icon.family.to_string()),
+        Err(_) => ("?".to_string(), "".to_string()),
+    }
+}
 
 /// EDID数据结构
 #[derive(Debug, Clone)]
@@ -261,7 +271,7 @@ fn decode_manufacturer_name(bytes: &[u8]) -> String {
 }
 
 /// 使用PowerShell直接获取显示器信息
-pub fn get_direct_monitor_info() -> Result<Vec<String>, String> {
+pub fn get_direct_monitor_info() -> Result<Vec<HardwareItem>, String> {
     let mut monitor_info = Vec::new();
     
     // 使用PowerShell命令获取显示器信息，隐藏窗口
@@ -368,12 +378,17 @@ pub fn get_direct_monitor_info() -> Result<Vec<String>, String> {
                 
                 // 格式化为：显示器n：制造商-型号-屏幕尺寸-分辨率@刷新率
                 let parts: Vec<&str> = monitor_line.split('-').collect();
-                let formatted_info = if parts.len() >= 2 {
+                let text = if parts.len() >= 2 {
                     format!("显示器{}：{}-{}-{}", i + 1, monitor_line, screen_size, resolution)
                 } else {
                     format!("显示器{}：{}-未知型号-{}-{}", i + 1, monitor_line, screen_size, resolution)
                 };
-                monitor_info.push(formatted_info);
+                monitor_info.push(HardwareItem {
+                    text,
+                    icon_path: "assets/icons/display.svg".to_string(),
+                    icon_char: get_iconflow_icon("display").0,
+                    icon_family: get_iconflow_icon("display").1,
+                });
             }
             
             if monitor_info.is_empty() {
@@ -401,7 +416,12 @@ pub fn get_direct_monitor_info() -> Result<Vec<String>, String> {
                     let trimmed = line.trim();
                     if !trimmed.is_empty() {
                         // 格式化为：显示器n：未知制造商-未知型号-未知尺寸-分辨率@刷新率
-                        monitor_info.push(format!("显示器{}：未知制造商-未知型号-未知尺寸-{}", j + 1, trimmed));
+                        monitor_info.push(HardwareItem {
+                            text: format!("显示器{}：未知制造商-未知型号-未知尺寸-{}", j + 1, trimmed),
+                            icon_path: "assets/icons/display.svg".to_string(),
+                            icon_char: get_iconflow_icon("desktop").0,
+                            icon_family: get_iconflow_icon("desktop").1,
+                        });
                     }
                 }
                     }
@@ -410,7 +430,12 @@ pub fn get_direct_monitor_info() -> Result<Vec<String>, String> {
             }
             
             if monitor_info.is_empty() {
-                Ok(vec!["未检测到显示器信息".to_string()])
+                Ok(vec![HardwareItem {
+                    text: "未检测到显示器信息".to_string(),
+                    icon_path: "assets/icons/display.svg".to_string(),
+                    icon_char: get_iconflow_icon("desktop").0,
+                icon_family: get_iconflow_icon("desktop").1,
+                }])
             } else {
                 Ok(monitor_info)
             }
@@ -421,10 +446,10 @@ pub fn get_direct_monitor_info() -> Result<Vec<String>, String> {
 }
 
 /// 获取完整的显示器信息（包括EDID和当前分辨率）
-pub fn get_complete_monitor_info(wmi_con: &WMIConnection) -> Result<Vec<String>, String> {
+pub fn get_complete_monitor_info(wmi_con: &WMIConnection) -> Result<Vec<HardwareItem>, String> {
     // 首先尝试使用Windows API直接获取显示器信息
     match get_direct_monitor_info() {
-        Ok(info) if !info.is_empty() && !info[0].contains("未检测到物理显示器") => {
+        Ok(info) if !info.is_empty() && !info[0].text.contains("未检测到物理显示器") => {
             // 如果Windows API成功获取到信息，直接返回
             return Ok(info);
         }
@@ -482,19 +507,34 @@ pub fn get_complete_monitor_info(wmi_con: &WMIConnection) -> Result<Vec<String>,
         };
         
         // 格式化为：显示器n：制造商-型号-屏幕尺寸-分辨率@刷新率
-        monitor_info.push(format!("显示器{}：{}-{}", i + 1, edid_str, res_info));
+        monitor_info.push(HardwareItem {
+            text: format!("显示器{}：{}-{}", i + 1, edid_str, res_info),
+            icon_path: "assets/icons/display.svg".to_string(),
+            icon_char: get_iconflow_icon("desktop").0,
+            icon_family: get_iconflow_icon("desktop").1,
+        });
     }
     
     // 如果没有获取到EDID信息，但获取到了分辨率信息
     if monitor_info.is_empty() && !resolution_info.is_empty() {
         for (i, res_info) in resolution_info.iter().enumerate() {
-            monitor_info.push(format!("显示器{}：{}", i + 1, res_info));
+            monitor_info.push(HardwareItem {
+                text: format!("显示器{}：{}", i + 1, res_info),
+                icon_path: "assets/icons/display.svg".to_string(),
+                icon_char: get_iconflow_icon("desktop").0,
+                icon_family: get_iconflow_icon("desktop").1,
+            });
         }
     }
     
     // 如果仍然没有信息，返回默认提示
     if monitor_info.is_empty() {
-        Ok(vec!["未检测到显示器信息".to_string()])
+        Ok(vec![HardwareItem {
+            text: "未检测到显示器信息".to_string(),
+            icon_path: "assets/icons/display.svg".to_string(),
+            icon_char: get_iconflow_icon("desktop").0,
+            icon_family: get_iconflow_icon("desktop").1,
+        }])
     } else {
         Ok(monitor_info)
     }
